@@ -462,16 +462,44 @@ export const PixelOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 						const existing = agents.get(id)!;
 						const isNewSession = existing.message === "✨ created";
 
-						// Only show "resumed" for actually resumed sessions, not newly created ones
-						const updatePatch: Partial<AgentState> = {
-							status: "idle",
-							tool: null,
-							message: isNewSession ? null : "↩️ resumed",
-						};
+						// Active states that should NOT be overwritten with "resumed"
+						const activeStates: AgentStatus[] = [
+							"thinking",
+							"editing",
+							"reading",
+							"running",
+						];
+						const isActive = activeStates.includes(existing.status);
+
+						// Sub-agents should never show "resumed" - they just show status indicators
+						const isSubAgent = existing.parentID !== null;
+
+						// Build update patch based on current state
+						const updatePatch: Partial<AgentState> = {};
+
+						if (isActive) {
+							// Preserve active state and current message - don't show "resumed"
+							// The agent is doing something (thinking, editing, etc.), keep showing that
+						} else if (isNewSession || isSubAgent) {
+							// New sessions and sub-agents don't show "resumed", just stay in their current idle/waiting state
+							updatePatch.status = "idle";
+							updatePatch.tool = null;
+							updatePatch.message = null;
+						} else {
+							// Only show "resumed" for truly resumed idle/waiting main agents
+							updatePatch.status = "idle";
+							updatePatch.tool = null;
+							updatePatch.message = "↩️ resumed";
+						}
+
 						if (title) {
 							updatePatch.title = title;
 						}
-						updateAgent(id, updatePatch);
+
+						// Only update if we have changes to make
+						if (Object.keys(updatePatch).length > 0) {
+							updateAgent(id, updatePatch);
+						}
 					}
 					broadcast();
 					openViewer();
