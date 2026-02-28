@@ -108,15 +108,34 @@ function connectWS() {
       if (msg.type === "snapshot") {
         // Merge new state, preserve visual positions from existing sprites
         const next = {};
+        const now = Date.now();
+        
         for (const a of msg.agents) {
           next[a.id] = { ...a };
         }
-        // Carry over any client-side visual data
-        for (const id in next) {
-          if (agents[id]) {
+        
+        // Carry over any client-side visual data and track disappearing agents
+        for (const id in agents) {
+          if (next[id]) {
+            // Agent still exists - carry over sprite
             next[id]._sprite = agents[id]._sprite;
+          } else {
+            // Agent was removed - keep it briefly for fade-out effect
+            const removedAgent = agents[id];
+            if (removedAgent._sprite && !removedAgent._fadeOutStart) {
+              removedAgent._fadeOutStart = now;
+              next[id] = removedAgent;
+            }
           }
         }
+        
+        // Remove agents that have been fading out for more than 1 second
+        for (const id in next) {
+          if (next[id]._fadeOutStart && now - next[id]._fadeOutStart > 1000) {
+            delete next[id];
+          }
+        }
+        
         agents = next;
 
         const allAgents = Object.values(agents);
@@ -731,9 +750,12 @@ new p5((p) => {
       
       const parentSprite = parent._sprite;
       const isSubagent = true;
+      const isIdle = a.status === "idle";
       
-      // Subagent color is based on parent's hue + offset
-      const subagentHue = (parent.color + 30) % 360;
+      // Subagent color is based on parent's hue + offset (grayed out if idle)
+      const subagentHue = isIdle ? 0 : (parent.color + 30) % 360;
+      const saturation = isIdle ? 0 : 65;
+      const lightness = isIdle ? 50 : 55;
       
       // Ensure sprite exists with subagent flag
       if (!a._sprite) {
@@ -749,58 +771,73 @@ new p5((p) => {
       updateStatusTransition(sp, a.status);
       updateBlinking(sp, now);
       
-      // Update orbit position around parent
-      sp.orbitAngle += sp.orbitSpeed * (1/60);
+      // Calculate fade out if agent is being removed
+      let fadeAlpha = 1.0;
+      if (a._fadeOutStart) {
+        const fadeProgress = (Date.now() - a._fadeOutStart) / 1000;
+        fadeAlpha = 1.0 - fadeProgress;
+        if (fadeAlpha < 0) fadeAlpha = 0;
+      }
+      
+      // Update orbit position around parent (slower if idle)
+      const orbitSpeed = isIdle ? sp.orbitSpeed * 0.3 : sp.orbitSpeed;
+      sp.orbitAngle += orbitSpeed * (1/60);
       const orbitX = Math.cos(sp.orbitAngle) * sp.orbitRadius;
       const orbitY = Math.sin(sp.orbitAngle * 0.7) * sp.orbitRadius * 0.4 + 15;
       
-      // Subtle bob
-      const bobY = Math.sin(now * 1.2 + sp.phase) * 2;
+      // Subtle bob (slower if idle)
+      const bobSpeed = isIdle ? 0.5 : 1.2;
+      const bobY = Math.sin(now * bobSpeed + sp.phase) * 2;
       
       // Calculate draw position
       const drawX = parentSprite.x + orbitX;
       const drawY = parentSprite.y + orbitY + bobY;
       
-      // Subagent radius (60% of main agent)
-      const r = 14 + Math.sin(now * 2 + sp.phase) * 2;
-      const alpha = 220;
+      // Subagent radius (60% of main agent, smaller if idle)
+      const pulseSpeed = isIdle ? 1 : 2;
+      const r = (isIdle ? 12 : 14) + Math.sin(now * pulseSpeed + sp.phase) * 2;
+      const baseAlpha = isIdle ? 160 : 220;
+      const alpha = baseAlpha * fadeAlpha;
       
-      // Draw connecting line to parent (subtle)
-      p.stroke(subagentHue, 60, 50, 30);
+      // Draw connecting line to parent (subtle, fade if idle)
+      const lineAlpha = isIdle ? 15 : 30;
+      p.stroke(subagentHue, isIdle ? 0 : 60, 50, lineAlpha * fadeAlpha);
       p.strokeWeight(1);
       p.line(parentSprite.x, parentSprite.y - 10, drawX, drawY - r);
       p.noStroke();
       
       // Shadow
-      p.fill(0, 0, 0, 40);
+      p.fill(0, 0, 0, 40 * fadeAlpha);
       p.ellipse(drawX + 1, drawY + r * 0.6 + 2, r * 1.4, r * 0.4);
       
       // Body - rounded rectangle for subagents (different from main agents' ellipse)
-      p.fill(p.color(`hsla(${subagentHue}, 65%, 40%, ${(alpha * 0.7) / 255})`));
+      p.fill(p.color(`hsla(${subagentHue}, ${saturation}%, ${lightness - 15}%, ${(alpha * 0.7) / 255})`));
       p.rectMode(p.CENTER);
       p.rect(drawX, drawY, r * 1.8, r * 1.6, r * 0.5);
-      p.fill(p.color(`hsla(${subagentHue}, 70%, 55%, ${alpha / 255})`));
+      p.fill(p.color(`hsla(${subagentHue}, ${saturation + 5}%, ${lightness}%, ${alpha / 255})`));
       p.rect(drawX - r * 0.1, drawY - r * 0.1, r * 1.5, r * 1.3, r * 0.4);
       p.rectMode(p.CORNER);
       
-      // Highlight
-      p.fill(p.color(`hsla(${subagentHue}, 50%, 85%, ${(alpha * 0.3) / 255})`));
+      // Highlight (dimmed if idle)
+      const highlightAlpha = isIdle ? 0.15 : 0.3;
+      p.fill(p.color(`hsla(${subagentHue}, ${isIdle ? 0 : 50}%, 85%, ${highlightAlpha * fadeAlpha})`));
       p.ellipse(drawX - r * 0.3, drawY - r * 0.35, r * 0.5, r * 0.4);
       
-      // Eyes - smaller for subagent
+      // Eyes - smaller for subagent (dimmed if idle)
       const eyeY = drawY - r * 0.1;
       const eyeSize = 3;
+      const eyeAlpha = isIdle ? alpha * 0.7 : alpha;
       if (sp.isBlinking) {
-        p.stroke(10, 10, 30, alpha);
+        p.stroke(10, 10, 30, eyeAlpha);
         p.strokeWeight(1.5);
         p.line(drawX - r * 0.3, eyeY, drawX - r * 0.1, eyeY);
         p.line(drawX + r * 0.1, eyeY, drawX + r * 0.3, eyeY);
         p.noStroke();
       } else {
-        p.fill(255, 255, 255, alpha * 0.9);
+        p.fill(255, 255, 255, eyeAlpha * 0.9);
         p.ellipse(drawX - r * 0.2, eyeY, eyeSize + 1, eyeSize + 2);
         p.ellipse(drawX + r * 0.2, eyeY, eyeSize + 1, eyeSize + 2);
-        p.fill(10, 10, 30, alpha);
+        p.fill(10, 10, 30, eyeAlpha);
         p.ellipse(drawX - r * 0.2, eyeY, 2, 2.5);
         p.ellipse(drawX + r * 0.2, eyeY, 2, 2.5);
       }

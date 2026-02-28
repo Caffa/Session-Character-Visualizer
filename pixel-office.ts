@@ -35,6 +35,7 @@ interface AgentState {
 	message: string | null; // last speech bubble text
 	since: number; // timestamp of last status change (ms)
 	color: number; // hue 0–360, derived from session id
+	idleSince: number | null; // timestamp when subagent went idle (for cleanup)
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -140,9 +141,14 @@ export const PixelOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 			}
 		}
 
-		// If we're a client instance, also sync to central server
+		// If we're a client instance, send incremental updates instead of full snapshot
+		// to avoid overwriting other instances' agents
 		if (syncWs && syncWs.readyState === WebSocket.OPEN) {
-			syncWs.send(msg);
+			const updateMsg = JSON.stringify({
+				type: "agent_update",
+				agents: [...agents.values()],
+			});
+			syncWs.send(updateMsg);
 		}
 	}
 
@@ -191,6 +197,7 @@ export const PixelOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 	let wss: Awaited<ReturnType<typeof Bun.serve>> | null = null;
 	let isServerInstance = false; // true if this instance started the server
 	let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
+	let idleCleanupInterval: ReturnType<typeof setInterval> | null = null;
 
 	// Start heartbeat to send periodic pings and prevent connection timeouts
 	function startHeartbeat() {
@@ -216,6 +223,33 @@ export const PixelOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 		}, 25000); // Heartbeat every 25 seconds
 	}
 
+	// Start cleanup interval to remove idle subagents after 10 seconds
+	function startIdleCleanup() {
+		if (idleCleanupInterval) return;
+		idleCleanupInterval = setInterval(() => {
+			const now = Date.now();
+			const toDelete: string[] = [];
+
+			for (const [id, agent] of agents) {
+				// Only cleanup subagents (have parentID) that have been idle for 10+ seconds
+				if (agent.parentID && agent.status === "idle" && agent.idleSince) {
+					const idleTime = now - agent.idleSince;
+					if (idleTime > 10000) {
+						// 10 seconds
+						toDelete.push(id);
+					}
+				}
+			}
+
+			if (toDelete.length > 0) {
+				for (const id of toDelete) {
+					agents.delete(id);
+				}
+				broadcast();
+			}
+		}, 1000); // Check every second
+	}
+
 	try {
 		wss = Bun.serve({
 			port: PORT,
@@ -223,7 +257,7 @@ export const PixelOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 				// Handle WebSocket upgrade
 				const url = new URL(req.url);
 				if (url.pathname === "/ws" || url.pathname === "/") {
-					const success = server.upgrade(req);
+					const success = server.upgrade(req, { data: {} });
 					if (success) return undefined;
 					return new Response("WebSocket upgrade failed", { status: 400 });
 				}
@@ -247,15 +281,18 @@ export const PixelOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 					// Handle incoming sync messages from other plugin instances
 					try {
 						const msg = JSON.parse(message.toString());
-						if (msg.type === "snapshot") {
-							// Merge incoming agents from client instances
+						if (msg.type === "agent_update") {
+							// Merge incoming agents from client instances - ADD only, don't remove
 							for (const agent of msg.agents) {
 								if (!agents.has(agent.id)) {
 									agents.set(agent.id, agent);
 								} else {
-									// Update existing agent
+									// Update existing agent with newer data
 									const existing = agents.get(agent.id)!;
-									Object.assign(existing, agent);
+									// Only update if the incoming agent has a newer 'since' timestamp
+									if (agent.since >= existing.since) {
+										Object.assign(existing, agent);
+									}
 								}
 							}
 							// Re-broadcast to all connected viewers
@@ -268,6 +305,8 @@ export const PixelOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 			},
 		});
 		isServerInstance = true;
+		startHeartbeat();
+		startIdleCleanup();
 		log("info", `WebSocket server running on ws://localhost:${PORT}`);
 	} catch (err) {
 		if ((err as NodeJS.ErrnoException).code === "EADDRINUSE") {
@@ -345,6 +384,16 @@ export const PixelOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 			wss = null;
 		}
 
+		// Stop intervals
+		if (heartbeatInterval) {
+			clearInterval(heartbeatInterval);
+			heartbeatInterval = null;
+		}
+		if (idleCleanupInterval) {
+			clearInterval(idleCleanupInterval);
+			idleCleanupInterval = null;
+		}
+
 		log("info", "Cleanup complete");
 	}
 
@@ -416,6 +465,7 @@ export const PixelOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 						message: "✨ created",
 						since: Date.now(),
 						color: hueFromId(id),
+						idleSince: null,
 					});
 
 					log("info", `Agent added, total agents: ${agents.size}`);
@@ -451,6 +501,7 @@ export const PixelOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 							message: null,
 							since: Date.now(),
 							color: hueFromId(id),
+							idleSince: null,
 						});
 						log(
 							"info",
@@ -518,10 +569,13 @@ export const PixelOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 				case "session.idle": {
 					const sessionID = props.sessionID as string;
 					if (!sessionID || !agents.has(sessionID)) return;
+					const agent = agents.get(sessionID)!;
+					const isSubagent = agent.parentID !== null;
 					updateAgent(sessionID, {
 						status: "idle",
 						tool: null,
-						message: "💤 waiting",
+						message: isSubagent ? "💤 done" : "💤 waiting",
+						idleSince: isSubagent ? Date.now() : null,
 					});
 					break;
 				}
