@@ -77,11 +77,7 @@ async function generateStatusGif(statusInfo) {
 
 	await browser.close();
 
-	const outputPath = path.join(
-		process.cwd(),
-		"media-previews",
-		`${statusInfo.name}.gif`,
-	);
+	const outputPath = path.join(process.cwd(), `${statusInfo.name}.gif`);
 	const framePattern = path.join(FRAMES_DIR, `${statusInfo.name}_%03d.png`);
 
 	execSync(
@@ -129,38 +125,7 @@ async function generateTransitionGif(fromStatus, toStatus, message) {
 async function generateMultiAgentGif() {
 	console.log("Generating multi-agent preview...");
 
-	const htmlContent = fs.readFileSync(PREVIEW_HTML, "utf-8");
-
-	const multiHtml = htmlContent
-		.replace(
-			"const PREVIEW_MODE = true;",
-			`const AGENTS = [
-        { id: 'agent-1', folder: 'web-app', color: 200, status: 'thinking', message: 'Reading App.tsx...' },
-        { id: 'agent-2', folder: 'api', color: 280, status: 'editing', message: 'Writing handler.ts...' },
-        { id: 'agent-3', folder: 'mobile', color: 140, status: 'running', message: 'npm build...' },
-        { id: 'agent-4', folder: 'docs', color: 40, status: 'idle', message: '' },
-      ];
-      let agentIndex = 0;
-      const PREVIEW_MODE = true;`,
-		)
-		.replace(
-			"const AGENT_CONFIG =",
-			"window.getAgentConfig = function(i) { return AGENTS[i % AGENTS.length]; };\n    const AGENT_CONFIG =",
-		)
-		.replace(
-			"const a = agent;",
-			`const idx = Math.floor((agentIndex++) / 8) % 4;
-      const a = window.getAgentConfig(idx);`,
-		)
-		.replace(
-			"p.draw = () => {",
-			`p.frameCountForAgent = 0;
-    p.draw = () => {
-    p.frameCountForAgent++;`,
-		);
-
-	const tempPath = path.join(FRAMES_DIR, "multi-temp.html");
-	fs.writeFileSync(tempPath, multiHtml);
+	const multiHtmlPath = path.join(process.cwd(), "multi-agent.html");
 
 	const browser = await puppeteer.launch({
 		headless: true,
@@ -175,9 +140,9 @@ async function generateMultiAgentGif() {
 			deviceScaleFactor: 1,
 		});
 
-		const url = `file://${tempPath}?t=${i}`;
-		await page.goto(url, { waitUntil: "networkidle0" });
-		await page.evaluate(() => new Promise((r) => setTimeout(r, 100)));
+		const url = `file://${multiHtmlPath}?t=${i}`;
+		await page.goto(url, { waitUntil: "networkidle0", timeout: 30000 });
+		await page.evaluate(() => new Promise((r) => setTimeout(r, 200)));
 
 		const screenshot = await page.screenshot({ type: "png" });
 		await page.close();

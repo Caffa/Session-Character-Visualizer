@@ -122,15 +122,25 @@ export const PixelOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 
 	// ── Broadcast to all connected clients ──────────────────────────────────
 
+	// WebSocket connection to central server (for non-server instances)
+	let syncWs: WebSocket | null = null;
+
 	function broadcast() {
 		const msg = JSON.stringify({
 			type: "snapshot",
 			agents: [...agents.values()],
 		});
+
+		// Send to all connected viewer clients
 		for (const ws of clients) {
 			if (ws.readyState === WebSocket.OPEN) {
 				ws.send(msg);
 			}
+		}
+
+		// If we're a client instance, also sync to central server
+		if (syncWs && syncWs.readyState === WebSocket.OPEN) {
+			syncWs.send(msg);
 		}
 	}
 
@@ -177,6 +187,7 @@ export const PixelOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 
 	// Track WebSocket connections using Bun's native WebSocket
 	let wss: Awaited<ReturnType<typeof Bun.serve>> | null = null;
+	let isServerInstance = false; // true if this instance started the server
 
 	try {
 		wss = Bun.serve({
@@ -206,20 +217,73 @@ export const PixelOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 					clients.delete(ws as unknown as globalThis.WebSocket);
 				},
 				message(ws, message) {
-					// Handle incoming messages if needed - silently ignore
+					// Handle incoming sync messages from other plugin instances
+					try {
+						const msg = JSON.parse(message.toString());
+						if (msg.type === "snapshot") {
+							// Merge incoming agents from client instances
+							for (const agent of msg.agents) {
+								if (!agents.has(agent.id)) {
+									agents.set(agent.id, agent);
+								} else {
+									// Update existing agent
+									const existing = agents.get(agent.id)!;
+									Object.assign(existing, agent);
+								}
+							}
+							// Re-broadcast to all connected viewers
+							broadcast();
+						}
+					} catch {
+						// Ignore parse errors
+					}
 				},
 			},
 		});
+		isServerInstance = true;
 		log("info", `WebSocket server running on ws://localhost:${PORT}`);
 	} catch (err) {
 		if ((err as NodeJS.ErrnoException).code === "EADDRINUSE") {
 			log(
 				"warn",
-				"Port 2727 already in use — viewer may be stale, try refreshing it",
+				"Port 2727 already in use — connecting to existing server as client",
 			);
 			serverWasAlreadyRunning = true;
-			// The viewer is still open from a previous session but disconnected from server
-			// User should refresh the viewer to reconnect
+			// Connect to existing server as a client to receive broadcasts
+			// and sync agent state
+			const wsUrl = `ws://localhost:${PORT}`;
+			syncWs = new WebSocket(wsUrl);
+
+			syncWs.onopen = () => {
+				log("info", "Connected to existing Pixel Office server as client");
+			};
+
+			syncWs.onmessage = (ev) => {
+				try {
+					const msg = JSON.parse(ev.data);
+					// When we receive a snapshot from the server, merge agents
+					if (msg.type === "snapshot") {
+						// Merge server's agents with our local agents
+						// This keeps our local state in sync
+						for (const agent of msg.agents) {
+							if (!agents.has(agent.id)) {
+								// New agent from another instance - add it
+								agents.set(agent.id, agent);
+							} else {
+								// Update existing agent with server data
+								const existing = agents.get(agent.id)!;
+								Object.assign(existing, agent);
+							}
+						}
+					}
+				} catch {
+					/* ignore parse errors */
+				}
+			};
+
+			syncWs.onerror = () => {
+				log("warn", "Error connecting to existing server");
+			};
 		} else {
 			log("error", `Failed to start WebSocket server: ${err}`);
 		}
@@ -229,6 +293,14 @@ export const PixelOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 
 	async function cleanup(signal: string) {
 		log("info", `Received ${signal}, shutting down...`);
+
+		// Close sync connection to central server
+		if (syncWs) {
+			if (syncWs.readyState === WebSocket.OPEN) {
+				syncWs.close(1001, "Client shutting down");
+			}
+			syncWs = null;
+		}
 
 		// Notify all clients that server is closing
 		const closeMsg = JSON.stringify({ type: "serverclosing", reason: signal });

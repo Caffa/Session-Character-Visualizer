@@ -14,12 +14,21 @@
 <script>
 const PREVIEW_MODE = true;
 const INITIAL_STATUS = new URLSearchParams(window.location.search).get('status') || 'idle';
+const STATUS_MESSAGES = {
+  idle: 'Waiting for input...',
+  thinking: 'Analyzing your request...',
+  reading: 'Reading files...',
+  editing: 'Writing code...',
+  running: 'npm install...',
+  waiting: 'Need permission',
+  error: 'Something went wrong'
+};
 const AGENT_CONFIG = {
   id: 'preview-agent',
   folder: 'my-project',
   color: 200,
   status: INITIAL_STATUS,
-  message: 'Reading index.ts...'
+  message: STATUS_MESSAGES[INITIAL_STATUS] || 'Waiting...'
 };
 
 const FLOOR_COLOR   = [15, 15, 25];
@@ -72,7 +81,9 @@ function getDeskPos(id, W, H) {
 function drawSpeechBubble(p, x, y, text, hue, alpha) {
   if (!text) return;
   p.push();
+  p.textFont('monospace');
   p.textSize(11);
+  p.textAlign(p.CENTER, p.CENTER);
   const tw = p.textWidth(text);
   const bw = tw + 18;
   const bh = 22;
@@ -93,8 +104,7 @@ function drawSpeechBubble(p, x, y, text, hue, alpha) {
   p.triangle(x - 5, by + bh, x + 5, by + bh, x, by + bh + 8);
 
   p.noStroke();
-  p.fill(220, 220, 255, alpha);
-  p.textAlign(p.CENTER, p.CENTER);
+  p.fill(220, 220, 255);
   p.text(text, x, by + bh / 2 + 1);
   p.pop();
 }
@@ -246,6 +256,7 @@ function updateBlinking(sp, now) {
 
 function drawNameTag(p, x, y, folder, hue, status) {
   p.push();
+  p.textFont('monospace');
   p.textSize(10);
   p.textAlign(p.CENTER, p.CENTER);
   const tw = p.textWidth(folder);

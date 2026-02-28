@@ -20,6 +20,39 @@ It's honestly just satisfying to watch. Like a digital pet, but more useful.
 
 ---
 
+## 📸 See It In Action
+
+Here's what the different agent statuses look like:
+
+### Single Agent Statuses
+
+| Status      | Preview                                  |
+| ----------- | ---------------------------------------- |
+| 💤 Idle     | ![idle](media-previews/idle.gif)         |
+| 🧠 Thinking | ![thinking](media-previews/thinking.gif) |
+| 📖 Reading  | ![reading](media-previews/reading.gif)   |
+| ✏️ Editing  | ![editing](media-previews/editing.gif)   |
+| 💻 Running  | ![running](media-previews/running.gif)   |
+| ⚠️ Waiting  | ![waiting](media-previews/waiting.gif)   |
+| ❌ Error    | ![error](media-previews/error.gif)       |
+
+### Status Transitions
+
+| Transition         | Preview                                                        |
+| ------------------ | -------------------------------------------------------------- |
+| Idle → Thinking    | ![idle-to-thinking](media-previews/idle-to-thinking.gif)       |
+| Thinking → Editing | ![thinking-to-editing](media-previews/thinking-to-editing.gif) |
+| Editing → Running  | ![editing-to-running](media-previews/editing-to-running.gif)   |
+| Running → Idle     | ![running-to-idle](media-previews/running-to-idle.gif)         |
+
+### Multi-Agent View
+
+Working on multiple projects at once? Here's what it looks like with 4 agents:
+
+![multi-agent](media-previews/multi-agent.gif)
+
+---
+
 ## 🎨 What the Status Colors Mean
 
 On each name tag, there's a small colored dot that tells you what the AI is up to:
@@ -90,7 +123,7 @@ Then add this to your `~/.config/opencode/opencode.json`:
 
 ---
 
-##  Making It Your Own
+## Making It Your Own
 
 Want to customize the look? The whole visual rendering is in one place — easy to swap out:
 
@@ -99,8 +132,7 @@ Want to customize the look? The whole visual rendering is in one place — easy 
 3. Replace the blob drawing with your sprites
 4. Use the status to pick different animation frames
 
-The entire rendering lives in the `draw()` function — it's surprisingly easy to modify.
----
+## The entire rendering lives in the `draw()` function — it's surprisingly easy to modify.
 
 ## How It Works (Technical)
 
@@ -122,7 +154,7 @@ The plugin taps into OpenCode's built-in event hooks — no file watching, no po
 
 ## Related Projects by Others
 
-I saw [Pixel Agents](https://github.com/pablodelucca/pixel-agents) by pablodelucca, and was very inspired. It does the same kind of visualisation with pixel art but as a VS Code plugin for Claude Code. This is my HTML CSS-only take on it, for OpenCode. 
+I saw [Pixel Agents](https://github.com/pablodelucca/pixel-agents) by pablodelucca, and was very inspired. It does the same kind of visualisation with pixel art but as a VS Code plugin for Claude Code. This is my HTML CSS-only take on it, for OpenCode.
 
 ---
 
@@ -140,12 +172,10 @@ Change `PORT = 2727` in `pixel-office.ts` and update the `WS_URL` in `pixel-offi
 - Run `bun install` in the plugin folder, then restart OpenCode
 - Open the browser console (F12) on the viewer page to check for errors
 
-
 ## Support This Project
 
 If you find this little plugin useful, I'd truly appreciate your support. Please consider buying me a coffee on [Ko-fi](https://ko-fi.com/pamelawang_mwahacookie). Your contribution helps me keep making tools that make your creative life easier.
 
 ## A Note on OpenCode
 
-Just to be clear — this is a plugin I built for OpenCode, but it's not made by the [OpenCode](https://github.com/anomalyco/opencode) team and I am not affliated with them. 
-
+Just to be clear — this is a plugin I built for OpenCode, but it's not made by the [OpenCode](https://github.com/anomalyco/opencode) team and I am not affliated with them.
