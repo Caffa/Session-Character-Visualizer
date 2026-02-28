@@ -119,9 +119,16 @@ function connectWS() {
         }
         agents = next;
 
-        const count = Object.keys(agents).length;
-        agentCountEl.textContent = count === 0 ? "" : `${count} agent${count !== 1 ? "s" : ""}`;
-        noAgents.classList.toggle("hidden", count > 0);
+        const allAgents = Object.values(agents);
+        const mainCount = allAgents.filter(a => !a.parentID).length;
+        const subCount = allAgents.filter(a => a.parentID).length;
+        
+        let countText = mainCount === 0 ? "" : `${mainCount} agent${mainCount !== 1 ? "s" : ""}`;
+        if (subCount > 0) {
+          countText += ` + ${subCount} subagent${subCount !== 1 ? "s" : ""}`;
+        }
+        agentCountEl.textContent = countText;
+        noAgents.classList.toggle("hidden", allAgents.length > 0);
       }
     } catch { /* ignore */ }
   };
@@ -155,12 +162,13 @@ const DESK_POSITIONS = [
 
 // Sprite state per agent (visual only)
 class Sprite {
-  constructor(x, y, hue) {
+  constructor(x, y, hue, isSubagent = false) {
     this.x = x;
     this.y = y;
     this.tx = x;    // target x
     this.ty = y;    // target y
     this.hue = hue;
+    this.isSubagent = isSubagent;
     this.phase = Math.random() * Math.PI * 2;  // pulse phase offset
     this.walkPhase = 0;
     this.bobAmount = 0;
@@ -175,6 +183,11 @@ class Sprite {
     this.wanderOffset = { x: 0, y: 0 };
     this.wanderTarget = { x: 0, y: 0 };
     this.wanderTimer = 0;
+    
+    // Subagents orbit around parent
+    this.orbitAngle = Math.random() * Math.PI * 2;
+    this.orbitRadius = 50 + Math.random() * 30;
+    this.orbitSpeed = 0.3 + Math.random() * 0.3;
     
     // Fiddling animations
     this.fiddlePhase = Math.random() * Math.PI * 2;
@@ -206,7 +219,8 @@ function getDeskPos(id, W, H) {
 // ── Speech bubble helpers ──────────────────────────────────────────────────
 
 function drawSpeechBubble(p, x, y, text, hue, alpha) {
-  if (!text) return;
+  // Also check for empty or whitespace-only strings
+  if (!text || !text.trim()) return;
   p.push();
   p.textSize(11);
   const tw = p.textWidth(text);
@@ -230,6 +244,42 @@ function drawSpeechBubble(p, x, y, text, hue, alpha) {
   p.noStroke();
   p.fill(10, 10, 20, alpha * 0.92);
   p.triangle(x - 5, by + bh, x + 5, by + bh, x, by + bh + 8);
+
+  // text
+  p.noStroke();
+  p.fill(220, 220, 255, alpha);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.text(text, x, by + bh / 2 + 1);
+  p.pop();
+}
+
+// ── Subagent speech bubble (smaller) ─────────────────────────────────────
+
+function drawSpeechBubbleSubagent(p, x, y, text, hue, alpha) {
+  if (!text) return;
+  p.push();
+  p.textSize(9);
+  const tw = p.textWidth(text);
+  const bw = tw + 12;
+  const bh = 16;
+  const bx = x - bw / 2;
+  const by = y - 45;
+
+  // bubble background
+  p.noStroke();
+  p.fill(10, 10, 20, alpha * 0.92);
+  p.rect(bx, by, bw, bh, 4);
+
+  // border
+  p.stroke(p.color(`hsla(${hue}, 70%, 60%, ${alpha / 255})`));
+  p.strokeWeight(1);
+  p.noFill();
+  p.rect(bx, by, bw, bh, 4);
+
+  // tail
+  p.noStroke();
+  p.fill(10, 10, 20, alpha * 0.92);
+  p.triangle(x - 3, by + bh, x + 3, by + bh, x, by + bh + 5);
 
   // text
   p.noStroke();
@@ -469,17 +519,28 @@ new p5((p) => {
 
     // ── Draw desks first (under agents) ──────────────────────────────────
     for (const a of agentList) {
-      const [dx, dy] = getDeskPos(a.id, p.width, p.height);
-      drawDesk(p, dx, dy, a.color, a.status !== "idle");
+      // Only draw desks for main agents (not subagents)
+      if (!a.parentID) {
+        const [dx, dy] = getDeskPos(a.id, p.width, p.height);
+        drawDesk(p, dx, dy, a.color, a.status !== "idle");
+      }
     }
 
-    // ── Draw each agent ───────────────────────────────────────────────────
-    for (const a of agentList) {
+    // Separate main agents from subagents
+    const mainAgents = agentList.filter(a => !a.parentID);
+    const subAgents = agentList.filter(a => a.parentID);
+
+    // ── Draw main agents ───────────────────────────────────────────────────
+    for (const a of mainAgents) {
       const [dx, dy] = getDeskPos(a.id, p.width, p.height);
 
       // Ensure sprite exists
       if (!a._sprite) {
         a._sprite = new Sprite(dx, dy - 20, a.color);
+        // Initialize status to current agent status to prevent jump
+        a._sprite.currentStatus = a.status;
+        a._sprite.targetStatus = a.status;
+        a._sprite.statusTransition = 1.0;
       }
       const sp = a._sprite;
 
@@ -516,12 +577,12 @@ new p5((p) => {
       const isError = a.status === "error";
       const isWaiting = a.status === "waiting";
       
-      // Nervous shake for waiting state
-      const shakeX = isWaiting ? Math.sin(now * 15) * 2 : 0;
-      const shakeY = isWaiting ? Math.cos(now * 12) * 1 : 0;
+      // Nervous shake for waiting state - gentle oscillation
+      const shakeX = isWaiting ? Math.sin(now * 6) * 1.5 : 0;
+      const shakeY = isWaiting ? Math.cos(now * 5) * 1 : 0;
       
-      // Vibration for error state
-      const vibrateX = isError ? Math.sin(now * 30) * 1.5 : 0;
+      // Subtle vibration for error state - reduced frequency for elegance
+      const vibrateX = isError ? Math.sin(now * 12) * 1 : 0;
       
       const drawX = sp.x + shakeX + vibrateX;
       const drawY = sp.y + shakeY;
@@ -531,11 +592,11 @@ new p5((p) => {
         p.noFill();
         p.strokeWeight(2);
         
-        // Different ring styles based on status
-        let ringPulse = now * 4;
-        if (a.status === "thinking") ringPulse = now * 1.5;  // Slower, expanding
-        if (a.status === "editing") ringPulse = now * 6;   // Fast, energetic
-        if (a.status === "waiting") ringPulse = now * 3;  // Moderate
+        // Different ring styles based on status (smoothed)
+        let ringPulse = now * 2.5;
+        if (a.status === "thinking") ringPulse = now * 1;  // Slow, expanding
+        if (a.status === "editing") ringPulse = now * 4;   // Energetic
+        if (a.status === "waiting") ringPulse = now * 2;  // Moderate
         
         const glowAlpha = (0.3 + 0.2 * Math.sin(ringPulse + sp.phase)) * alpha;
         p.stroke(p.color(`hsla(${a.color}, 80%, 65%, ${glowAlpha / 255})`));
@@ -545,21 +606,21 @@ new p5((p) => {
         p.ellipse(drawX, drawY, (r + 18) * 2, (r + 18) * 2);
       }
 
-      // Bob / walk animation - status specific
+      // Bob / walk animation - status specific (smoothed for elegance)
       let bobY;
       if (a.status === "idle") {
         bobY = Math.sin(now * 0.8 + sp.phase) * 1.5;
       } else if (a.status === "editing") {
-        // Bouncy editing motion
-        bobY = Math.abs(Math.sin(now * 5 + sp.phase)) * 4 - 1;
+        // Gentle bouncy editing motion
+        bobY = Math.abs(Math.sin(now * 3 + sp.phase)) * 3 - 0.5;
       } else if (a.status === "running") {
-        // Fast running bob
-        bobY = Math.sin(now * 8 + sp.phase) * 5;
+        // Smooth running bob
+        bobY = Math.sin(now * 5 + sp.phase) * 4;
       } else if (a.status === "waiting") {
-        // Nervous bob
-        bobY = Math.sin(now * 4 + sp.phase) * 2;
+        // Gentle nervous bob
+        bobY = Math.sin(now * 3 + sp.phase) * 1.5;
       } else {
-        bobY = Math.sin(now * blendPulse * 3 + sp.phase) * 3;
+        bobY = Math.sin(now * blendPulse * 2 + sp.phase) * 2;
       }
 
       // Main blob body
@@ -645,6 +706,92 @@ new p5((p) => {
 
       // Name tag
       drawNameTag(p, drawX, drawY, a.folder, a.color, a.status);
+    }
+
+    // ── Draw subagents (smaller, orbiting around parent) ────────────────────
+    for (const a of subAgents) {
+      // Find parent agent to orbit around
+      const parent = agents[a.parentID];
+      if (!parent || !parent._sprite) continue;
+      
+      const parentSprite = parent._sprite;
+      const isSubagent = true;
+      
+      // Subagent color is based on parent's hue + offset
+      const subagentHue = (parent.color + 30) % 360;
+      
+      // Ensure sprite exists with subagent flag
+      if (!a._sprite) {
+        a._sprite = new Sprite(parentSprite.x, parentSprite.y, subagentHue, true);
+        a._sprite.currentStatus = a.status;
+        a._sprite.targetStatus = a.status;
+        a._sprite.statusTransition = 1.0;
+      }
+      const sp = a._sprite;
+      sp.isSubagent = true;
+      
+      // Update status transition
+      updateStatusTransition(sp, a.status);
+      updateBlinking(sp, now);
+      
+      // Update orbit position around parent
+      sp.orbitAngle += sp.orbitSpeed * (1/60);
+      const orbitX = Math.cos(sp.orbitAngle) * sp.orbitRadius;
+      const orbitY = Math.sin(sp.orbitAngle * 0.7) * sp.orbitRadius * 0.4 + 15;
+      
+      // Subtle bob
+      const bobY = Math.sin(now * 1.2 + sp.phase) * 2;
+      
+      // Calculate draw position
+      const drawX = parentSprite.x + orbitX;
+      const drawY = parentSprite.y + orbitY + bobY;
+      
+      // Subagent radius (60% of main agent)
+      const r = 14 + Math.sin(now * 2 + sp.phase) * 2;
+      const alpha = 220;
+      
+      // Draw connecting line to parent (subtle)
+      p.stroke(subagentHue, 60, 50, 30);
+      p.strokeWeight(1);
+      p.line(parentSprite.x, parentSprite.y - 10, drawX, drawY - r);
+      p.noStroke();
+      
+      // Shadow
+      p.fill(0, 0, 0, 40);
+      p.ellipse(drawX + 1, drawY + r * 0.6 + 2, r * 1.4, r * 0.4);
+      
+      // Body - rounded rectangle for subagents (different from main agents' ellipse)
+      p.fill(p.color(`hsla(${subagentHue}, 65%, 40%, ${(alpha * 0.7) / 255})`));
+      p.rectMode(p.CENTER);
+      p.rect(drawX, drawY, r * 1.8, r * 1.6, r * 0.5);
+      p.fill(p.color(`hsla(${subagentHue}, 70%, 55%, ${alpha / 255})`));
+      p.rect(drawX - r * 0.1, drawY - r * 0.1, r * 1.5, r * 1.3, r * 0.4);
+      p.rectMode(p.CORNER);
+      
+      // Highlight
+      p.fill(p.color(`hsla(${subagentHue}, 50%, 85%, ${(alpha * 0.3) / 255})`));
+      p.ellipse(drawX - r * 0.3, drawY - r * 0.35, r * 0.5, r * 0.4);
+      
+      // Eyes - smaller for subagent
+      const eyeY = drawY - r * 0.1;
+      const eyeSize = 3;
+      if (sp.isBlinking) {
+        p.stroke(10, 10, 30, alpha);
+        p.strokeWeight(1.5);
+        p.line(drawX - r * 0.3, eyeY, drawX - r * 0.1, eyeY);
+        p.line(drawX + r * 0.1, eyeY, drawX + r * 0.3, eyeY);
+        p.noStroke();
+      } else {
+        p.fill(255, 255, 255, alpha * 0.9);
+        p.ellipse(drawX - r * 0.2, eyeY, eyeSize + 1, eyeSize + 2);
+        p.ellipse(drawX + r * 0.2, eyeY, eyeSize + 1, eyeSize + 2);
+        p.fill(10, 10, 30, alpha);
+        p.ellipse(drawX - r * 0.2, eyeY, 2, 2.5);
+        p.ellipse(drawX + r * 0.2, eyeY, 2, 2.5);
+      }
+      
+      // Speech bubble (smaller for subagent)
+      drawSpeechBubbleSubagent(p, drawX, drawY + bobY, a.message, subagentHue, alpha);
     }
 
     // ── Empty office hint ──────────────────────────────────────────────────

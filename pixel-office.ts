@@ -26,6 +26,7 @@ type AgentStatus =
 
 interface AgentState {
 	id: string;
+	parentID: string | null; // ID of parent agent if this is a subagent
 	folder: string; // basename of project directory
 	folderFull: string; // full path
 	status: AgentStatus;
@@ -379,6 +380,7 @@ export const PixelOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 
 					agents.set(id, {
 						id,
+						parentID: parentID ?? null,
 						folder: folderName(directory),
 						folderFull: directory,
 						status: "idle",
@@ -389,6 +391,49 @@ export const PixelOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 					});
 
 					log("info", `Agent added, total agents: ${agents.size}`);
+					broadcast();
+					openViewer();
+					break;
+				}
+
+				// Session updated (includes when session is resumed/focused)
+				case "session.updated": {
+					const sessionInfo = props.info as {
+						id: string;
+						title?: string;
+					};
+					const id = sessionInfo.id;
+
+					log(
+						"info",
+						`Session updated: ${id.substring(0, 8)}..., agents count: ${agents.size}`,
+					);
+
+					// If agent doesn't exist yet, create it (edge case - session resumed but not created in this instance)
+					if (!agents.has(id)) {
+						agents.set(id, {
+							id,
+							parentID: null,
+							folder: folderName(directory),
+							folderFull: directory,
+							status: "idle",
+							tool: null,
+							message: null,
+							since: Date.now(),
+							color: hueFromId(id),
+						});
+						log(
+							"info",
+							`Agent added via session.updated, total agents: ${agents.size}`,
+						);
+					} else {
+						// Update existing agent - it was resumed
+						updateAgent(id, {
+							status: "idle",
+							tool: null,
+							message: "↩️ resumed",
+						});
+					}
 					broadcast();
 					openViewer();
 					break;
