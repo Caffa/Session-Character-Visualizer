@@ -462,13 +462,21 @@ function updateBlinking(sp, now) {
   }
 }
 
-function drawNameTag(p, x, y, folder, hue, status) {
+function drawNameTag(p, x, y, folder, title, hue, status) {
   p.push();
   p.textSize(10);
   p.textAlign(p.CENTER, p.CENTER);
-  const tw = p.textWidth(folder);
+  
+  // Calculate height based on whether title exists
+  const hasTitle = title && title.trim();
+  const folderTw = p.textWidth(folder);
+  const titleTw = hasTitle ? p.textWidth(title) : 0;
+  const tw = Math.max(folderTw, titleTw);
+  
   const bw = tw + 14;
-  const bh = 16;
+  const baseBh = 16;
+  const titleBh = hasTitle ? 14 : 0;
+  const bh = baseBh + titleBh;
   const bx = x - bw / 2;
   const by = y + 32;
 
@@ -478,7 +486,14 @@ function drawNameTag(p, x, y, folder, hue, status) {
 
   const hsl = `hsla(${hue}, 70%, 65%, 0.9)`;
   p.fill(p.color(hsl));
-  p.text(folder, x, by + bh / 2 + 1);
+  p.text(folder, x, by + baseBh / 2 + 1);
+
+  // Draw title below folder name (smaller, lighter)
+  if (hasTitle) {
+    p.fill(p.color(`hsla(${hue}, 50%, 55%, 0.8)`));
+    p.textSize(8);
+    p.text(title, x, by + baseBh + titleBh / 2);
+  }
 
   // small status dot
   const dotColors = {
@@ -492,7 +507,7 @@ function drawNameTag(p, x, y, folder, hue, status) {
   };
   const dc = dotColors[status] || [120, 120, 120];
   p.fill(...dc, 230);
-  p.ellipse(bx - 6, by + bh / 2, 5, 5);
+  p.ellipse(bx - 6, by + baseBh / 2, 5, 5);
   p.pop();
 }
 
@@ -705,7 +720,7 @@ new p5((p) => {
       drawSpeechBubble(p, drawX, drawY + bobY, a.message, a.color, alpha);
 
       // Name tag
-      drawNameTag(p, drawX, drawY, a.folder, a.color, a.status);
+      drawNameTag(p, drawX, drawY, a.folder, a.title, a.color, a.status);
     }
 
     // ── Draw subagents (smaller, orbiting around parent) ────────────────────

@@ -371,6 +371,7 @@ export const PixelOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 					};
 					const id = sessionInfo.id;
 					const parentID = sessionInfo.parentID;
+					const title = sessionInfo.title;
 					const isSubAgent = !!parentID;
 
 					// Log for debugging - shows session info and agent count
@@ -384,9 +385,10 @@ export const PixelOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 						parentID: parentID ?? null,
 						folder: folderName(directory),
 						folderFull: directory,
+						title: title ?? null,
 						status: "idle",
 						tool: null,
-						message: null,
+						message: "✨ created",
 						since: Date.now(),
 						color: hueFromId(id),
 					});
@@ -404,6 +406,7 @@ export const PixelOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 						title?: string;
 					};
 					const id = sessionInfo.id;
+					const title = sessionInfo.title;
 
 					log(
 						"info",
@@ -417,6 +420,7 @@ export const PixelOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 							parentID: null,
 							folder: folderName(directory),
 							folderFull: directory,
+							title: title ?? null,
 							status: "idle",
 							tool: null,
 							message: null,
@@ -429,11 +433,16 @@ export const PixelOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 						);
 					} else {
 						// Update existing agent - it was resumed
-						updateAgent(id, {
+						// Also update title if provided
+						const updatePatch: Partial<AgentState> = {
 							status: "idle",
 							tool: null,
 							message: "↩️ resumed",
-						});
+						};
+						if (title) {
+							updatePatch.title = title;
+						}
+						updateAgent(id, updatePatch);
 					}
 					broadcast();
 					openViewer();
