@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Pixel Office — Preview Mode</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #0d0d14; overflow: hidden; font-family: monospace; }
+    canvas { display: block; }
+  </style>
+</head>
+<body>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.4/p5.min.js"></script>
+<script>
+const PREVIEW_MODE = true;
+const INITIAL_STATUS = new URLSearchParams(window.location.search).get('status') || 'idle';
+const AGENT_CONFIG = {
+  id: 'preview-agent',
+  folder: 'my-project',
+  color: 200,
+  status: INITIAL_STATUS,
+  message: 'Reading index.ts...'
+};
+
+const FLOOR_COLOR   = [15, 15, 25];
+const GRID_COLOR    = [22, 22, 38];
+const GRID_SIZE     = 48;
+
+const STATUS_CFG = {
+  idle:     { pulse: 0.4, radius: 22, opacity: 160, label: "💤", ring: false },
+  thinking: { pulse: 1.8, radius: 26, opacity: 230, label: "🧠", ring: true  },
+  editing:  { pulse: 2.5, radius: 28, opacity: 255, label: "✏️", ring: true  },
+  reading:  { pulse: 1.2, radius: 25, opacity: 210, label: "📖", ring: true  },
+  running:  { pulse: 3.0, radius: 27, opacity: 245, label: "💻", ring: true  },
+  waiting:  { pulse: 0.8, radius: 24, opacity: 200, label: "⚠️", ring: true  },
+  error:    { pulse: 1.5, radius: 24, opacity: 255, label: "❌", ring: true  },
+};
+
+const DESK_POSITIONS = [[0.5, 0.5]];
+
+class Sprite {
+  constructor(x, y, hue) {
+    this.x = x;
+    this.y = y;
+    this.tx = x;
+    this.ty = y;
+    this.hue = hue;
+    this.phase = Math.random() * Math.PI * 2;
+    this.walkPhase = 0;
+    this.bobAmount = 0;
+    this.trail = [];
+    this.currentStatus = "idle";
+    this.targetStatus = INITIAL_STATUS;
+    this.statusTransition = 1.0;
+    this.wanderOffset = { x: 0, y: 0 };
+    this.wanderTarget = { x: 0, y: 0 };
+    this.wanderTimer = 0;
+    this.fiddlePhase = Math.random() * Math.PI * 2;
+    this.propAngle = 0;
+    this.propScale = 1;
+    this.blinkTimer = Math.random() * 3;
+    this.isBlinking = false;
+    this.expression = "normal";
+  }
+}
+
+function getDeskPos(id, W, H) {
+  const [nx, ny] = DESK_POSITIONS[0];
+  return [nx * W, ny * (H - 30)];
+}
+
+function drawSpeechBubble(p, x, y, text, hue, alpha) {
+  if (!text) return;
+  p.push();
+  p.textSize(11);
+  const tw = p.textWidth(text);
+  const bw = tw + 18;
+  const bh = 22;
+  const bx = x - bw / 2;
+  const by = y - 72;
+
+  p.noStroke();
+  p.fill(10, 10, 20, alpha * 0.92);
+  p.rect(bx, by, bw, bh, 6);
+
+  p.stroke(p.color(`hsla(${hue}, 70%, 60%, ${alpha / 255})`));
+  p.strokeWeight(1);
+  p.noFill();
+  p.rect(bx, by, bw, bh, 6);
+
+  p.noStroke();
+  p.fill(10, 10, 20, alpha * 0.92);
+  p.triangle(x - 5, by + bh, x + 5, by + bh, x, by + bh + 8);
+
+  p.noStroke();
+  p.fill(220, 220, 255, alpha);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.text(text, x, by + bh / 2 + 1);
+  p.pop();
+}
+
+function drawDesk(p, x, y, hue, occupied) {
+  p.push();
+  p.noStroke();
+  const a = occupied ? 90 : 40;
+  p.fill(p.color(`hsla(${hue}, 30%, 25%, ${a / 255})`));
+  p.rect(x - 30, y + 16, 60, 28, 4);
+  p.fill(p.color(`hsla(${hue}, 20%, 15%, ${a / 255})`));
+  p.rect(x - 14, y + 6, 28, 18, 2);
+  if (occupied) {
+    p.fill(p.color(`hsla(${hue}, 80%, 60%, 0.12)`));
+    p.rect(x - 12, y + 8, 24, 14, 2);
+  }
+  p.fill(p.color(`hsla(${hue}, 20%, 18%, ${a / 255})`));
+  p.rect(x - 4, y + 24, 8, 6, 1);
+  p.pop();
+}
+
+function drawFloor(p) {
+  p.background(...FLOOR_COLOR);
+  p.stroke(...GRID_COLOR);
+  p.strokeWeight(1);
+  for (let x = 0; x < p.width; x += GRID_SIZE) {
+    p.line(x, 0, x, p.height);
+  }
+  for (let y = 0; y < p.height - 30; y += GRID_SIZE) {
+    p.line(0, y, p.width, y);
+  }
+}
+
+function drawFiddlingObject(p, sp, status, r, now, alpha) {
+  const fudge = Math.sin(now * 2 + sp.fiddlePhase);
+  const fudge2 = Math.cos(now * 1.5 + sp.fiddlePhase * 1.3);
+  const objX = sp.x + r * 1.4 + fudge * 5;
+  const objY = sp.y + r * 0.3 + fudge2 * 3;
+  p.push();
+  p.textSize(14);
+  p.textAlign(p.CENTER, p.CENTER);
+  
+  switch (status) {
+    case "editing": {
+      p.save();
+      const pencilAngle = Math.sin(now * 4) * 0.3;
+      p.translate(objX + 5, objY - 5);
+      p.rotate(pencilAngle);
+      p.text("✏️", 0, 0);
+      p.restore();
+      break;
+    }
+    case "reading": {
+      const bookOpen = 0.5 + 0.5 * Math.sin(now * 1.2);
+      p.save();
+      p.translate(objX, objY);
+      p.scale(1, bookOpen > 0.5 ? 1 : -0.8);
+      p.text("📖", 0, 0);
+      p.restore();
+      p.save();
+      p.translate(sp.x, sp.y - r * 0.6);
+      const glassesWobble = Math.sin(now * 0.8) * 2;
+      p.textSize(10);
+      p.text(`👓`, glassesWobble, 0);
+      p.restore();
+      break;
+    }
+    case "running": {
+      p.noStroke();
+      p.fill(255, 255, 255, alpha * 0.3);
+      for (let i = 0; i < 3; i++) {
+        const streakX = sp.x - r * 1.5 - i * 15 - Math.abs(fudge) * 5;
+        const streakY = sp.y + fudge2 * 4;
+        p.ellipse(streakX, streakY, 8 - i * 2, 3);
+      }
+      break;
+    }
+    case "thinking": {
+      for (let i = 0; i < 3; i++) {
+        const particlePhase = (now * 0.8 + i * 0.7 + sp.fiddlePhase) % 3;
+        const px = sp.x + Math.sin(now * 2 + i) * 20;
+        const py = sp.y - r * (1 + particlePhase);
+        const pAlpha = alpha * (1 - particlePhase / 3) * 0.5;
+        p.textSize(8 + i * 2);
+        p.fill(200, 180, 255, pAlpha);
+        p.text("✨", px, py);
+      }
+      break;
+    }
+    case "idle": {
+      if (Math.sin(now * 0.5 + sp.fiddlePhase) > 0.85) {
+        p.textSize(10);
+        p.fill(255, 255, 200, alpha * 0.6);
+        p.text("✨", objX + Math.sin(now * 3) * 8, objY - 10);
+      }
+      break;
+    }
+    case "waiting": {
+      p.textSize(14);
+      p.fill(255, 220, 100, alpha * (0.6 + 0.4 * Math.sin(now * 3)));
+      const qmBounce = Math.abs(Math.sin(now * 3)) * 8;
+      p.text("❓", objX, objY - qmBounce);
+      break;
+    }
+    case "error": {
+      p.textSize(12);
+      p.fill(255, 100, 100, alpha * (0.5 + 0.3 * Math.sin(now * 5)));
+      p.text("⚡", objX + fudge * 6, objY);
+      break;
+    }
+  }
+  p.pop();
+}
+
+function updateStatusTransition(sp, newStatus, deltaTime = 0.016) {
+  if (sp.targetStatus !== newStatus) {
+    sp.currentStatus = sp.targetStatus;
+    sp.targetStatus = newStatus;
+    sp.statusTransition = 0;
+  }
+  if (sp.statusTransition < 1) {
+    sp.statusTransition += deltaTime * 0.7;
+    if (sp.statusTransition > 1) sp.statusTransition = 1;
+  }
+}
+
+function updateWander(sp, now) {
+  sp.wanderTimer -= 1/60;
+  if (sp.wanderTimer <= 0) {
+    sp.wanderTimer = 3 + Math.random() * 5;
+    sp.wanderTarget.x = (Math.random() - 0.5) * 60;
+    sp.wanderTarget.y = (Math.random() - 0.5) * 30;
+  }
+  sp.wanderOffset.x += (sp.wanderTarget.x - sp.wanderOffset.x) * 0.02;
+  sp.wanderOffset.y += (sp.wanderTarget.y - sp.wanderOffset.y) * 0.02;
+}
+
+function updateBlinking(sp, now) {
+  sp.blinkTimer -= 1/60;
+  if (sp.blinkTimer <= 0) {
+    sp.isBlinking = true;
+    sp.blinkTimer = 0.1;
+  }
+  if (sp.isBlinking && sp.blinkTimer <= 0) {
+    sp.isBlinking = false;
+    sp.blinkTimer = 2 + Math.random() * 4;
+  }
+}
+
+function drawNameTag(p, x, y, folder, hue, status) {
+  p.push();
+  p.textSize(10);
+  p.textAlign(p.CENTER, p.CENTER);
+  const tw = p.textWidth(folder);
+  const bw = tw + 14;
+  const bh = 16;
+  const bx = x - bw / 2;
+  const by = y + 32;
+
+  p.noStroke();
+  p.fill(10, 10, 20, 200);
+  p.rect(bx, by, bw, bh, 3);
+
+  const hsl = `hsla(${hue}, 70%, 65%, 0.9)`;
+  p.fill(p.color(hsl));
+  p.text(folder, x, by + bh / 2 + 1);
+
+  const dotColors = {
+    idle:     [80, 80, 80],
+    thinking: [180, 160, 255],
+    editing:  [100, 255, 150],
+    reading:  [100, 200, 255],
+    running:  [255, 180, 80],
+    waiting:  [255, 220, 60],
+    error:    [255, 80, 80],
+  };
+  const dc = dotColors[status] || [120, 120, 120];
+  p.fill(...dc, 230);
+  p.ellipse(bx - 6, by + bh / 2, 5, 5);
+  p.pop();
+}
+
+new p5((p) => {
+  let agent;
+  
+  p.setup = () => {
+    const cnv = p.createCanvas(800, 500);
+    cnv.position(0, 0);
+    cnv.style("z-index", "1");
+    p.pixelDensity(1);
+    p.textFont("monospace");
+    
+    const [dx, dy] = getDeskPos('preview', p.width, p.height);
+    agent = { ...AGENT_CONFIG, _sprite: new Sprite(dx, dy - 20, AGENT_CONFIG.color) };
+  };
+
+  p.draw = () => {
+    drawFloor(p);
+
+    const now = p.millis() / 1000;
+    const a = agent;
+    const [dx, dy] = getDeskPos(a.id, p.width, p.height);
+
+    drawDesk(p, dx, dy, a.color, a.status !== "idle");
+
+    if (!a._sprite) {
+      a._sprite = new Sprite(dx, dy - 20, a.color);
+    }
+    const sp = a._sprite;
+
+    updateStatusTransition(sp, a.status);
+    updateWander(sp, now);
+    updateBlinking(sp, now);
+
+    sp.tx = dx + sp.wanderOffset.x;
+    sp.ty = dy - 20 + sp.wanderOffset.y;
+    sp.x += (sp.tx - sp.x) * 0.06;
+    sp.y += (sp.ty - sp.y) * 0.06;
+
+    const currentCfg = STATUS_CFG[sp.currentStatus] || STATUS_CFG.idle;
+    const targetCfg = STATUS_CFG[sp.targetStatus] || STATUS_CFG.idle;
+    const t = sp.statusTransition;
+    
+    const blendPulse = currentCfg.pulse * (1 - t) + targetCfg.pulse * t;
+    const blendRadius = currentCfg.radius * (1 - t) + targetCfg.radius * t;
+    const blendAlpha = currentCfg.opacity * (1 - t) + targetCfg.opacity * t;
+    
+    const pulse = Math.sin(now * blendPulse * Math.PI * 2 + sp.phase);
+    const r = blendRadius + pulse * 3;
+    const alpha = blendAlpha;
+
+    const isError = a.status === "error";
+    const isWaiting = a.status === "waiting";
+    
+    const shakeX = isWaiting ? Math.sin(now * 15) * 2 : 0;
+    const shakeY = isWaiting ? Math.cos(now * 12) * 1 : 0;
+    const vibrateX = isError ? Math.sin(now * 30) * 1.5 : 0;
+    
+    const drawX = sp.x + shakeX + vibrateX;
+    const drawY = sp.y + shakeY;
+
+    if (targetCfg.ring) {
+      p.noFill();
+      p.strokeWeight(2);
+      let ringPulse = now * 4;
+      if (a.status === "thinking") ringPulse = now * 1.5;
+      if (a.status === "editing") ringPulse = now * 6;
+      if (a.status === "waiting") ringPulse = now * 3;
+      
+      const glowAlpha = (0.3 + 0.2 * Math.sin(ringPulse + sp.phase)) * alpha;
+      p.stroke(p.color(`hsla(${a.color}, 80%, 65%, ${glowAlpha / 255})`));
+      p.ellipse(drawX, drawY, (r + 10) * 2, (r + 10) * 2);
+      p.strokeWeight(1);
+      p.stroke(p.color(`hsla(${a.color}, 60%, 80%, ${glowAlpha * 0.5 / 255})`));
+      p.ellipse(drawX, drawY, (r + 18) * 2, (r + 18) * 2);
+    }
+
+    let bobY;
+    if (a.status === "idle") {
+      bobY = Math.sin(now * 0.8 + sp.phase) * 1.5;
+    } else if (a.status === "editing") {
+      bobY = Math.abs(Math.sin(now * 5 + sp.phase)) * 4 - 1;
+    } else if (a.status === "running") {
+      bobY = Math.sin(now * 8 + sp.phase) * 5;
+    } else if (a.status === "waiting") {
+      bobY = Math.sin(now * 4 + sp.phase) * 2;
+    } else {
+      bobY = Math.sin(now * blendPulse * 3 + sp.phase) * 3;
+    }
+
+    p.noStroke();
+    p.fill(0, 0, 0, 60);
+    p.ellipse(drawX + 2 + sp.wanderOffset.x * 0.3, drawY + r * 0.8 + 4, r * 1.6, r * 0.5);
+
+    const bodyHue = isError ? (a.color + 20) % 360 : a.color;
+    p.fill(p.color(`hsla(${bodyHue}, 70%, 35%, ${(alpha * 0.6) / 255})`));
+    p.ellipse(drawX, drawY + bobY, r * 2, r * 2);
+    p.fill(p.color(`hsla(${bodyHue}, 80%, 60%, ${alpha / 255})`));
+    p.ellipse(drawX - r * 0.1, drawY + bobY - r * 0.05, r * 1.7, r * 1.7);
+    
+    if (isError) {
+      p.fill(255, 80, 80, alpha * 0.15 * (0.5 + 0.5 * Math.sin(now * 5)));
+      p.ellipse(drawX, drawY + bobY, r * 2.2, r * 2.2);
+    }
+    
+    p.fill(p.color(`hsla(${bodyHue}, 60%, 90%, ${(alpha * 0.35) / 255})`));
+    p.ellipse(drawX - r * 0.25, drawY + bobY - r * 0.3, r * 0.8, r * 0.6);
+
+    const eyeY = drawY + bobY - r * 0.1;
+    
+    if (sp.isBlinking) {
+      p.stroke(10, 10, 30, alpha);
+      p.strokeWeight(2);
+      p.line(drawX - r * 0.35, eyeY, drawX - r * 0.1, eyeY);
+      p.line(drawX + r * 0.1, eyeY, drawX + r * 0.35, eyeY);
+      p.noStroke();
+    } else {
+      p.fill(255, 255, 255, alpha * 0.9);
+      p.ellipse(drawX - r * 0.22, eyeY, 5, 6);
+      p.ellipse(drawX + r * 0.22, eyeY, 5, 6);
+      
+      let pupilShift = 0;
+      let pupilV = 1;
+      
+      if (a.status === "thinking") {
+        pupilShift = Math.sin(now * 3) * 1.5;
+        pupilV = 0;
+      } else if (a.status === "reading") {
+        pupilShift = Math.sin(now * 0.5) * 0.5;
+        pupilV = 0.5;
+      } else if (a.status === "running") {
+        pupilShift = Math.sin(now * 10) * 1;
+      } else if (a.status === "waiting") {
+        pupilShift = Math.sin(now * 2) * 1;
+      }
+      
+      p.fill(10, 10, 30, alpha);
+      p.ellipse(drawX - r * 0.22 + pupilShift, eyeY + pupilV, 2.5, 3);
+      p.ellipse(drawX + r * 0.22 + pupilShift, eyeY + pupilV, 2.5, 3);
+      
+      if (isError) {
+        p.stroke(10, 10, 30, alpha);
+        p.strokeWeight(1.5);
+        const ex1 = drawX - r * 0.22, ey1 = eyeY - 1;
+        const ex2 = drawX + r * 0.22, ey2 = eyeY - 1;
+        const es = 2.5;
+        p.line(ex1 - es, ey1 - es, ex1 + es, ey1 + es);
+        p.line(ex1 - es, ey1 + es, ex1 + es, ey1 - es);
+        p.line(ex2 - es, ey2 - es, ex2 + es, ey2 + es);
+        p.line(ex2 - es, ey2 + es, ex2 + es, ey2 - es);
+        p.noStroke();
+      }
+    }
+
+    drawFiddlingObject(p, sp, a.status, r, now, alpha);
+    drawSpeechBubble(p, drawX, drawY + bobY, a.message, a.color, alpha);
+    drawNameTag(p, drawX, drawY, a.folder, a.color, a.status);
+  };
+});
+</script>
+</body>
+</html>
