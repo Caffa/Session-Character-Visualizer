@@ -190,6 +190,31 @@ export const PixelOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 	// Track WebSocket connections using Bun's native WebSocket
 	let wss: Awaited<ReturnType<typeof Bun.serve>> | null = null;
 	let isServerInstance = false; // true if this instance started the server
+	let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
+
+	// Start heartbeat to send periodic pings and prevent connection timeouts
+	function startHeartbeat() {
+		if (heartbeatInterval) return;
+		heartbeatInterval = setInterval(() => {
+			const heartbeatMsg = JSON.stringify({
+				type: "heartbeat",
+				timestamp: Date.now(),
+			});
+			// Also broadcast current state periodically to keep clients in sync
+			const snapshotMsg = JSON.stringify({
+				type: "snapshot",
+				agents: [...agents.values()],
+			});
+			for (const ws of clients) {
+				if (ws.readyState === WebSocket.OPEN) {
+					// Send heartbeat
+					ws.send(heartbeatMsg);
+					// Also send current state to ensure clients stay synced
+					ws.send(snapshotMsg);
+				}
+			}
+		}, 25000); // Heartbeat every 25 seconds
+	}
 
 	try {
 		wss = Bun.serve({
@@ -432,12 +457,16 @@ export const PixelOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 							`Agent added via session.updated, total agents: ${agents.size}`,
 						);
 					} else {
-						// Update existing agent - it was resumed
-						// Also update title if provided
+						// Agent already exists - check if it was just created (session.created already ran)
+						// If message is "✨ created", don't override with "resumed"
+						const existing = agents.get(id)!;
+						const isNewSession = existing.message === "✨ created";
+
+						// Only show "resumed" for actually resumed sessions, not newly created ones
 						const updatePatch: Partial<AgentState> = {
 							status: "idle",
 							tool: null,
-							message: "↩️ resumed",
+							message: isNewSession ? null : "↩️ resumed",
 						};
 						if (title) {
 							updatePatch.title = title;
