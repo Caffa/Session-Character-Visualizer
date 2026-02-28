@@ -29,6 +29,7 @@ interface AgentState {
 	parentID: string | null; // ID of parent agent if this is a subagent
 	folder: string; // basename of project directory
 	folderFull: string; // full path
+	title: string | null; // session title
 	status: AgentStatus;
 	tool: string | null; // current tool being executed
 	message: string | null; // last speech bubble text
