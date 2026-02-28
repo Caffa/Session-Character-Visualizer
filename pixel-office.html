@@ -1,0 +1,664 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Pixel Office — OpenCode</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #0d0d14;
+      overflow: hidden;
+      font-family: monospace;
+    }
+    canvas { display: block; }
+
+    #status-bar {
+      position: fixed;
+      bottom: 0; left: 0; right: 0;
+      height: 28px;
+      background: #111120cc;
+      border-top: 1px solid #2a2a4a;
+      display: flex;
+      align-items: center;
+      padding: 0 14px;
+      gap: 18px;
+      font-size: 11px;
+      color: #555;
+      backdrop-filter: blur(4px);
+      z-index: 10;
+    }
+    #status-bar .dot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: #f00;
+      flex-shrink: 0;
+    }
+    #status-bar .dot.connected { background: #0f0; box-shadow: 0 0 6px #0f04; }
+    #status-bar span { color: #667; }
+    #status-bar .count { color: #aaa; }
+
+    #no-agents {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: #2a2a4a;
+      font-size: 13px;
+      gap: 10px;
+      pointer-events: none;
+    }
+    #no-agents .big { font-size: 48px; }
+    #no-agents.hidden { display: none; }
+  </style>
+</head>
+<body>
+
+<div id="no-agents">
+  <div class="big">🏢</div>
+  <div>Waiting for OpenCode sessions…</div>
+  <div style="font-size:11px;color:#1e1e3a">Start a session in OpenCode to spawn an agent</div>
+</div>
+
+<div id="status-bar">
+  <div class="dot" id="ws-dot"></div>
+  <span id="ws-label">connecting…</span>
+  <span style="margin-left:auto" class="count" id="agent-count"></span>
+  <span>ws://localhost:2727/ws</span>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.4/p5.min.js"></script>
+<script>
+// ─── WebSocket Client ─────────────────────────────────────────────────────────
+
+const WS_URL = "ws://localhost:2727/ws";
+let agents = {};      // id → AgentState
+let ws = null;
+let connected = false;
+
+const wsDot   = document.getElementById("ws-dot");
+const wsLabel = document.getElementById("ws-label");
+const agentCountEl = document.getElementById("agent-count");
+const noAgents = document.getElementById("no-agents");
+
+function connectWS() {
+  ws = new WebSocket(WS_URL);
+
+  ws.onopen = () => {
+    connected = true;
+    wsDot.className = "dot connected";
+    wsLabel.textContent = "connected";
+  };
+
+  ws.onclose = () => {
+    connected = false;
+    wsDot.className = "dot";
+    wsLabel.textContent = "reconnecting…";
+    setTimeout(connectWS, 2000);
+  };
+
+  ws.onerror = () => {
+    ws.close();
+  };
+
+  ws.onmessage = (ev) => {
+    try {
+      const msg = JSON.parse(ev.data);
+      if (msg.type === "snapshot") {
+        // Merge new state, preserve visual positions from existing sprites
+        const next = {};
+        for (const a of msg.agents) {
+          next[a.id] = { ...a };
+        }
+        // Carry over any client-side visual data
+        for (const id in next) {
+          if (agents[id]) {
+            next[id]._sprite = agents[id]._sprite;
+          }
+        }
+        agents = next;
+
+        const count = Object.keys(agents).length;
+        agentCountEl.textContent = count === 0 ? "" : `${count} agent${count !== 1 ? "s" : ""}`;
+        noAgents.classList.toggle("hidden", count > 0);
+      }
+    } catch { /* ignore */ }
+  };
+}
+
+connectWS();
+
+// ─── p5.js Sketch ─────────────────────────────────────────────────────────────
+
+const FLOOR_COLOR   = [15, 15, 25];
+const GRID_COLOR    = [22, 22, 38];
+const GRID_SIZE     = 48;
+
+// Status → animation config
+const STATUS_CFG = {
+  idle:     { pulse: 0.4, radius: 22, opacity: 160, label: "💤", ring: false },
+  thinking: { pulse: 1.8, radius: 26, opacity: 230, label: "🧠", ring: true  },
+  editing:  { pulse: 2.5, radius: 28, opacity: 255, label: "✏️", ring: true  },
+  reading:  { pulse: 1.2, radius: 25, opacity: 210, label: "📖", ring: true  },
+  running:  { pulse: 3.0, radius: 27, opacity: 245, label: "💻", ring: true  },
+  waiting:  { pulse: 0.8, radius: 24, opacity: 200, label: "⚠️", ring: true  },
+  error:    { pulse: 1.5, radius: 24, opacity: 255, label: "❌", ring: true  },
+};
+
+// Desk positions — a small office grid of 8 "desks"
+// Positions are normalized 0–1, mapped to canvas at runtime
+const DESK_POSITIONS = [
+  [0.18, 0.28], [0.38, 0.28], [0.62, 0.28], [0.82, 0.28],
+  [0.18, 0.65], [0.38, 0.65], [0.62, 0.65], [0.82, 0.65],
+];
+
+// Sprite state per agent (visual only)
+class Sprite {
+  constructor(x, y, hue) {
+    this.x = x;
+    this.y = y;
+    this.tx = x;    // target x
+    this.ty = y;    // target y
+    this.hue = hue;
+    this.phase = Math.random() * Math.PI * 2;  // pulse phase offset
+    this.walkPhase = 0;
+    this.bobAmount = 0;
+    this.trail = [];  // last N positions for motion blur
+    
+    // Status transition (for slow morph between states)
+    this.currentStatus = "idle";
+    this.targetStatus = "idle";
+    this.statusTransition = 1.0;  // 0 = fully transitioned to new status
+    
+    // Wandering / pacing behavior
+    this.wanderOffset = { x: 0, y: 0 };
+    this.wanderTarget = { x: 0, y: 0 };
+    this.wanderTimer = 0;
+    
+    // Fiddling animations
+    this.fiddlePhase = Math.random() * Math.PI * 2;
+    this.propAngle = 0;
+    this.propScale = 1;
+    
+    // Blinking
+    this.blinkTimer = Math.random() * 3;
+    this.isBlinking = false;
+    
+    // Expression (for error state)
+    this.expression = "normal";
+  }
+}
+
+// Assign desks round-robin as agents appear
+const deskAssignments = {};  // agentId → deskIndex
+let nextDesk = 0;
+
+function getDeskPos(id, W, H) {
+  if (!(id in deskAssignments)) {
+    deskAssignments[id] = nextDesk % DESK_POSITIONS.length;
+    nextDesk++;
+  }
+  const [nx, ny] = DESK_POSITIONS[deskAssignments[id]];
+  return [nx * W, ny * (H - 30)];
+}
+
+// ── Speech bubble helpers ──────────────────────────────────────────────────
+
+function drawSpeechBubble(p, x, y, text, hue, alpha) {
+  if (!text) return;
+  p.push();
+  p.textSize(11);
+  const tw = p.textWidth(text);
+  const bw = tw + 18;
+  const bh = 22;
+  const bx = x - bw / 2;
+  const by = y - 72;
+
+  // bubble background
+  p.noStroke();
+  p.fill(10, 10, 20, alpha * 0.92);
+  p.rect(bx, by, bw, bh, 6);
+
+  // border
+  p.stroke(p.color(`hsla(${hue}, 70%, 60%, ${alpha / 255})`));
+  p.strokeWeight(1);
+  p.noFill();
+  p.rect(bx, by, bw, bh, 6);
+
+  // tail
+  p.noStroke();
+  p.fill(10, 10, 20, alpha * 0.92);
+  p.triangle(x - 5, by + bh, x + 5, by + bh, x, by + bh + 8);
+
+  // text
+  p.noStroke();
+  p.fill(220, 220, 255, alpha);
+  p.textAlign(p.CENTER, p.CENTER);
+  p.text(text, x, by + bh / 2 + 1);
+  p.pop();
+}
+
+// ── Desk drawing ───────────────────────────────────────────────────────────
+
+function drawDesk(p, x, y, hue, occupied) {
+  p.push();
+  p.noStroke();
+  // desk surface
+  const a = occupied ? 90 : 40;
+  p.fill(p.color(`hsla(${hue}, 30%, 25%, ${a / 255})`));
+  p.rect(x - 30, y + 16, 60, 28, 4);
+  // monitor
+  p.fill(p.color(`hsla(${hue}, 20%, 15%, ${a / 255})`));
+  p.rect(x - 14, y + 6, 28, 18, 2);
+  // monitor glow when occupied
+  if (occupied) {
+    p.fill(p.color(`hsla(${hue}, 80%, 60%, 0.12)`));
+    p.rect(x - 12, y + 8, 24, 14, 2);
+  }
+  // stand
+  p.fill(p.color(`hsla(${hue}, 20%, 18%, ${a / 255})`));
+  p.rect(x - 4, y + 24, 8, 6, 1);
+  p.pop();
+}
+
+// ── Floor grid ─────────────────────────────────────────────────────────────
+
+function drawFloor(p) {
+  p.background(...FLOOR_COLOR);
+  p.stroke(...GRID_COLOR);
+  p.strokeWeight(1);
+  for (let x = 0; x < p.width; x += GRID_SIZE) {
+    p.line(x, 0, x, p.height);
+  }
+  for (let y = 0; y < p.height - 30; y += GRID_SIZE) {
+    p.line(0, y, p.width, y);
+  }
+}
+
+// ── Fiddling objects based on status ────────────────────────────────────────
+
+function drawFiddlingObject(p, sp, status, r, now, alpha) {
+  const fudge = Math.sin(now * 2 + sp.fiddlePhase);
+  const fudge2 = Math.cos(now * 1.5 + sp.fiddlePhase * 1.3);
+  const objX = sp.x + r * 1.4 + fudge * 5;
+  const objY = sp.y + r * 0.3 + fudge2 * 3;
+  p.push();
+  p.textSize(14);
+  p.textAlign(p.CENTER, p.CENTER);
+  
+  switch (status) {
+    case "editing": {
+      // Pencil that bounces
+      p.save();
+      const pencilAngle = Math.sin(now * 4) * 0.3;
+      p.translate(objX + 5, objY - 5);
+      p.rotate(pencilAngle);
+      p.text("✏️", 0, 0);
+      p.restore();
+      break;
+    }
+    case "reading": {
+      // Book that opens/closes
+      const bookOpen = 0.5 + 0.5 * Math.sin(now * 1.2);
+      p.save();
+      p.translate(objX, objY);
+      p.scale(1, bookOpen > 0.5 ? 1 : -0.8);
+      p.text("📖", 0, 0);
+      p.restore();
+      // Glasses
+      p.save();
+      p.translate(sp.x, sp.y - r * 0.6);
+      const glassesWobble = Math.sin(now * 0.8) * 2;
+      p.textSize(10);
+      p.text(`👓`, glassesWobble, 0);
+      p.restore();
+      break;
+    }
+    case "running": {
+      // Motion streaks
+      p.noStroke();
+      p.fill(255, 255, 255, alpha * 0.3);
+      for (let i = 0; i < 3; i++) {
+        const streakX = sp.x - r * 1.5 - i * 15 - Math.abs(fudge) * 5;
+        const streakY = sp.y + fudge2 * 4;
+        p.ellipse(streakX, streakY, 8 - i * 2, 3);
+      }
+      break;
+    }
+    case "thinking": {
+      // Brain particles floating up
+      for (let i = 0; i < 3; i++) {
+        const particlePhase = (now * 0.8 + i * 0.7 + sp.fiddlePhase) % 3;
+        const px = sp.x + Math.sin(now * 2 + i) * 20;
+        const py = sp.y - r * (1 + particlePhase);
+        const pAlpha = alpha * (1 - particlePhase / 3) * 0.5;
+        p.textSize(8 + i * 2);
+        p.fill(200, 180, 255, pAlpha);
+        p.text("✨", px, py);
+      }
+      break;
+    }
+    case "idle": {
+      // Occasional sparkles
+      if (Math.sin(now * 0.5 + sp.fiddlePhase) > 0.85) {
+        p.textSize(10);
+        p.fill(255, 255, 200, alpha * 0.6);
+        p.text("✨", objX + Math.sin(now * 3) * 8, objY - 10);
+      }
+      break;
+    }
+    case "waiting": {
+      // Question mark that bounces
+      p.textSize(14);
+      p.fill(255, 220, 100, alpha * (0.6 + 0.4 * Math.sin(now * 3)));
+      const qmBounce = Math.abs(Math.sin(now * 3)) * 8;
+      p.text("❓", objX, objY - qmBounce);
+      break;
+    }
+    case "error": {
+      // Small warning signs
+      p.textSize(12);
+      p.fill(255, 100, 100, alpha * (0.5 + 0.3 * Math.sin(now * 5)));
+      p.text("⚡", objX + fudge * 6, objY);
+      break;
+    }
+  }
+  p.pop();
+}
+
+// ── Update status transition ─────────────────────────────────────────────────
+
+function updateStatusTransition(sp, newStatus, deltaTime = 0.016) {
+  if (sp.targetStatus !== newStatus) {
+    sp.currentStatus = sp.targetStatus;
+    sp.targetStatus = newStatus;
+    sp.statusTransition = 0;
+  }
+  
+  if (sp.statusTransition < 1) {
+    sp.statusTransition += deltaTime * 0.7;  // ~1.5 seconds for full transition
+    if (sp.statusTransition > 1) sp.statusTransition = 1;
+  }
+}
+
+// ── Update wander/pacing ───────────────────────────────────────────────────
+
+function updateWander(sp, now) {
+  sp.wanderTimer -= 1/60;
+  if (sp.wanderTimer <= 0) {
+    // New wander target
+    sp.wanderTimer = 3 + Math.random() * 5;
+    sp.wanderTarget.x = (Math.random() - 0.5) * 60;
+    sp.wanderTarget.y = (Math.random() - 0.5) * 30;
+  }
+  
+  // Smoothly move toward wander target
+  sp.wanderOffset.x += (sp.wanderTarget.x - sp.wanderOffset.x) * 0.02;
+  sp.wanderOffset.y += (sp.wanderTarget.y - sp.wanderOffset.y) * 0.02;
+}
+
+// ── Update blinking ───────────────────────────────────────────────────────
+
+function updateBlinking(sp, now) {
+  sp.blinkTimer -= 1/60;
+  if (sp.blinkTimer <= 0) {
+    sp.isBlinking = true;
+    sp.blinkTimer = 0.1;  // Blink duration
+  }
+  if (sp.isBlinking && sp.blinkTimer <= 0) {
+    sp.isBlinking = false;
+    sp.blinkTimer = 2 + Math.random() * 4;  // Next blink in 2-6 seconds
+  }
+}
+
+function drawNameTag(p, x, y, folder, hue, status) {
+  p.push();
+  p.textSize(10);
+  p.textAlign(p.CENTER, p.CENTER);
+  const tw = p.textWidth(folder);
+  const bw = tw + 14;
+  const bh = 16;
+  const bx = x - bw / 2;
+  const by = y + 32;
+
+  p.noStroke();
+  p.fill(10, 10, 20, 200);
+  p.rect(bx, by, bw, bh, 3);
+
+  const hsl = `hsla(${hue}, 70%, 65%, 0.9)`;
+  p.fill(p.color(hsl));
+  p.text(folder, x, by + bh / 2 + 1);
+
+  // small status dot
+  const dotColors = {
+    idle:     [80, 80, 80],
+    thinking: [180, 160, 255],
+    editing:  [100, 255, 150],
+    reading:  [100, 200, 255],
+    running:  [255, 180, 80],
+    waiting:  [255, 220, 60],
+    error:    [255, 80, 80],
+  };
+  const dc = dotColors[status] || [120, 120, 120];
+  p.fill(...dc, 230);
+  p.ellipse(bx - 6, by + bh / 2, 5, 5);
+  p.pop();
+}
+
+// ── Main p5 sketch ─────────────────────────────────────────────────────────
+
+new p5((p) => {
+  p.setup = () => {
+    const cnv = p.createCanvas(p.windowWidth, p.windowHeight - 28);
+    cnv.position(0, 0);
+    cnv.style("z-index", "1");
+    p.pixelDensity(window.devicePixelRatio || 1);
+    p.textFont("monospace");
+  };
+
+  p.windowResized = () => {
+    p.resizeCanvas(p.windowWidth, p.windowHeight - 28);
+  };
+
+  p.draw = () => {
+    drawFloor(p);
+
+    const now = p.millis() / 1000;
+    const agentList = Object.values(agents);
+
+    // ── Draw desks first (under agents) ──────────────────────────────────
+    for (const a of agentList) {
+      const [dx, dy] = getDeskPos(a.id, p.width, p.height);
+      drawDesk(p, dx, dy, a.color, a.status !== "idle");
+    }
+
+    // ── Draw each agent ───────────────────────────────────────────────────
+    for (const a of agentList) {
+      const [dx, dy] = getDeskPos(a.id, p.width, p.height);
+
+      // Ensure sprite exists
+      if (!a._sprite) {
+        a._sprite = new Sprite(dx, dy - 20, a.color);
+      }
+      const sp = a._sprite;
+
+      // Update status transition (smooth morph between states)
+      updateStatusTransition(sp, a.status);
+      
+      // Update wandering/pacing behavior
+      updateWander(sp, now);
+      
+      // Update blinking
+      updateBlinking(sp, now);
+
+      // Move sprite toward desk + wander offset (lerp)
+      sp.tx = dx + sp.wanderOffset.x;
+      sp.ty = dy - 20 + sp.wanderOffset.y;
+      sp.x += (sp.tx - sp.x) * 0.06;
+      sp.y += (sp.ty - sp.y) * 0.06;
+
+      // Blend configs based on transition state
+      const currentCfg = STATUS_CFG[sp.currentStatus] || STATUS_CFG.idle;
+      const targetCfg = STATUS_CFG[sp.targetStatus] || STATUS_CFG.idle;
+      const t = sp.statusTransition;
+      
+      // Lerped config values
+      const blendPulse = currentCfg.pulse * (1 - t) + targetCfg.pulse * t;
+      const blendRadius = currentCfg.radius * (1 - t) + targetCfg.radius * t;
+      const blendAlpha = currentCfg.opacity * (1 - t) + targetCfg.opacity * t;
+      
+      const pulse = Math.sin(now * blendPulse * Math.PI * 2 + sp.phase);
+      const r = blendRadius + pulse * 3;
+      const alpha = blendAlpha;
+
+      // Status-specific effects
+      const isError = a.status === "error";
+      const isWaiting = a.status === "waiting";
+      
+      // Nervous shake for waiting state
+      const shakeX = isWaiting ? Math.sin(now * 15) * 2 : 0;
+      const shakeY = isWaiting ? Math.cos(now * 12) * 1 : 0;
+      
+      // Vibration for error state
+      const vibrateX = isError ? Math.sin(now * 30) * 1.5 : 0;
+      
+      const drawX = sp.x + shakeX + vibrateX;
+      const drawY = sp.y + shakeY;
+
+      // Glow ring for active states
+      if (targetCfg.ring) {
+        p.noFill();
+        p.strokeWeight(2);
+        
+        // Different ring styles based on status
+        let ringPulse = now * 4;
+        if (a.status === "thinking") ringPulse = now * 1.5;  // Slower, expanding
+        if (a.status === "editing") ringPulse = now * 6;   // Fast, energetic
+        if (a.status === "waiting") ringPulse = now * 3;  // Moderate
+        
+        const glowAlpha = (0.3 + 0.2 * Math.sin(ringPulse + sp.phase)) * alpha;
+        p.stroke(p.color(`hsla(${a.color}, 80%, 65%, ${glowAlpha / 255})`));
+        p.ellipse(drawX, drawY, (r + 10) * 2, (r + 10) * 2);
+        p.strokeWeight(1);
+        p.stroke(p.color(`hsla(${a.color}, 60%, 80%, ${glowAlpha * 0.5 / 255})`));
+        p.ellipse(drawX, drawY, (r + 18) * 2, (r + 18) * 2);
+      }
+
+      // Bob / walk animation - status specific
+      let bobY;
+      if (a.status === "idle") {
+        bobY = Math.sin(now * 0.8 + sp.phase) * 1.5;
+      } else if (a.status === "editing") {
+        // Bouncy editing motion
+        bobY = Math.abs(Math.sin(now * 5 + sp.phase)) * 4 - 1;
+      } else if (a.status === "running") {
+        // Fast running bob
+        bobY = Math.sin(now * 8 + sp.phase) * 5;
+      } else if (a.status === "waiting") {
+        // Nervous bob
+        bobY = Math.sin(now * 4 + sp.phase) * 2;
+      } else {
+        bobY = Math.sin(now * blendPulse * 3 + sp.phase) * 3;
+      }
+
+      // Main blob body
+      p.noStroke();
+      // Shadow (affected by wander)
+      p.fill(0, 0, 0, 60);
+      p.ellipse(drawX + 2 + sp.wanderOffset.x * 0.3, drawY + r * 0.8 + 4, r * 1.6, r * 0.5);
+
+      // Body gradient simulation - add red tint for error state
+      const bodyHue = isError ? (a.color + 20) % 360 : a.color;
+      p.fill(p.color(`hsla(${bodyHue}, 70%, 35%, ${(alpha * 0.6) / 255})`));
+      p.ellipse(drawX, drawY + bobY, r * 2, r * 2);
+      p.fill(p.color(`hsla(${bodyHue}, 80%, 60%, ${alpha / 255})`));
+      p.ellipse(drawX - r * 0.1, drawY + bobY - r * 0.05, r * 1.7, r * 1.7);
+      
+      // Red pulse for error
+      if (isError) {
+        p.fill(255, 80, 80, alpha * 0.15 * (0.5 + 0.5 * Math.sin(now * 5)));
+        p.ellipse(drawX, drawY + bobY, r * 2.2, r * 2.2);
+      }
+      
+      // Highlight
+      p.fill(p.color(`hsla(${bodyHue}, 60%, 90%, ${(alpha * 0.35) / 255})`));
+      p.ellipse(drawX - r * 0.25, drawY + bobY - r * 0.3, r * 0.8, r * 0.6);
+
+      // Eyes
+      const eyeY = drawY + bobY - r * 0.1;
+      
+      if (sp.isBlinking) {
+        // Closed eyes (horizontal line)
+        p.stroke(10, 10, 30, alpha);
+        p.strokeWeight(2);
+        p.line(drawX - r * 0.35, eyeY, drawX - r * 0.1, eyeY);
+        p.line(drawX + r * 0.1, eyeY, drawX + r * 0.35, eyeY);
+        p.noStroke();
+      } else {
+        // Open eyes
+        p.fill(255, 255, 255, alpha * 0.9);
+        p.ellipse(drawX - r * 0.22, eyeY, 5, 6);
+        p.ellipse(drawX + r * 0.22, eyeY, 5, 6);
+        
+        // Pupils - status specific movement
+        let pupilShift = 0;
+        let pupilV = 1;
+        
+        if (a.status === "thinking") {
+          pupilShift = Math.sin(now * 3) * 1.5;  // Side to side
+          pupilV = 0;  // Look up slightly
+        } else if (a.status === "reading") {
+          pupilShift = Math.sin(now * 0.5) * 0.5;  // Subtle movement
+          pupilV = 0.5;
+        } else if (a.status === "running") {
+          pupilShift = Math.sin(now * 10) * 1;  // Fast darting
+        } else if (a.status === "waiting") {
+          pupilShift = Math.sin(now * 2) * 1;  // Looking around nervously
+        }
+        
+        p.fill(10, 10, 30, alpha);
+        p.ellipse(drawX - r * 0.22 + pupilShift, eyeY + pupilV, 2.5, 3);
+        p.ellipse(drawX + r * 0.22 + pupilShift, eyeY + pupilV, 2.5, 3);
+        
+        // Error expression (X_X eyes)
+        if (isError) {
+          p.stroke(10, 10, 30, alpha);
+          p.strokeWeight(1.5);
+          // X eyes
+          const ex1 = drawX - r * 0.22, ey1 = eyeY - 1;
+          const ex2 = drawX + r * 0.22, ey2 = eyeY - 1;
+          const es = 2.5;
+          p.line(ex1 - es, ey1 - es, ex1 + es, ey1 + es);
+          p.line(ex1 - es, ey1 + es, ex1 + es, ey1 - es);
+          p.line(ex2 - es, ey2 - es, ex2 + es, ey2 + es);
+          p.line(ex2 - es, ey2 + es, ex2 + es, ey2 - es);
+          p.noStroke();
+        }
+      }
+
+      // Fiddling objects based on status
+      drawFiddlingObject(p, sp, a.status, r, now, alpha);
+
+      // Speech bubble
+      drawSpeechBubble(p, drawX, drawY + bobY, a.message, a.color, alpha);
+
+      // Name tag
+      drawNameTag(p, drawX, drawY, a.folder, a.color, a.status);
+    }
+
+    // ── Empty office hint ──────────────────────────────────────────────────
+    if (agentList.length === 0 && !connected) {
+      p.push();
+      p.fill(30, 30, 60, 200);
+      p.noStroke();
+      p.textSize(12);
+      p.textAlign(p.CENTER);
+      p.text("⚡ Waiting for plugin…", p.width / 2, p.height / 2 + 80);
+      p.pop();
+    }
+  };
+});
+</script>
+</body>
+</html>

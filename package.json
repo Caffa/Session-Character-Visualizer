@@ -1,0 +1,6 @@
+{
+  "name": "pixel-office-plugin",
+  "version": "1.0.0",
+  "description": "Pixel Office - OpenCode visualization plugin",
+  "type": "module"
+}
