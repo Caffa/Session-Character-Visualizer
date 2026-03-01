@@ -1,0 +1,26 @@
+# Playwright CLI - test artifacts
+.playwright-cli/
+
+# Test screenshots (auto-generated)
+tests/e2e/screenshots/*.png
+!tests/e2e/screenshots/.gitkeep
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Environment
+.env
+.env.local
+.env.*.local

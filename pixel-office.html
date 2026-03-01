@@ -170,6 +170,11 @@ function connectWS() {
       }
     }
 
+    // Clean up stale position assignments (agents that no longer exist and TTL expired)
+    positionAssignments = positionAssignments.filter(id => {
+      return id in agentPositions || positionSlotTTL.has(id);
+    });
+
     agents = next;
 
     const allAgents = Object.values(agents);
@@ -206,9 +211,10 @@ const STATUS_CFG = {
 
 // ── Radial positioning ─────────────────────────────────────────────────────
 
-// Track agent positions for radial layout
+// Track agent positions for radial layout - with stability buffer
 const agentPositions = {};  // agentId → index
 let positionAssignments = [];  // track order for consistent angles
+const positionSlotTTL = new Map();  // agentId → timestamp when slot expires
 
 function easeInOutCubic(t) {
   return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
@@ -237,9 +243,25 @@ function calculateRadialPos(agentIndex, totalAgents, W, H) {
 }
 
 function getAgentPosition(id, W, H) {
+  const now = Date.now();
+  
+  // Clean up expired position slots (keep them for 3 seconds after agent removal)
+  for (const [agentId, expiry] of positionSlotTTL) {
+    if (expiry < now && !positionAssignments.includes(agentId)) {
+      positionSlotTTL.delete(agentId);
+    }
+  }
+  
   // Get or assign position index
   if (!(id in agentPositions)) {
-    agentPositions[id] = positionAssignments.length;
+    // Check if we have a reserved slot for this agent (from recent removal)
+    if (positionSlotTTL.has(id)) {
+      // Find the old index from assignments (search before it was removed)
+      agentPositions[id] = positionAssignments.length;
+    } else {
+      // New agent gets next available slot
+      agentPositions[id] = positionAssignments.length;
+    }
     positionAssignments.push(id);
   }
   
@@ -251,15 +273,13 @@ function getAgentPosition(id, W, H) {
 function removeAgentPosition(id) {
   if (id in agentPositions) {
     const removedIndex = agentPositions[id];
+    
+    // Mark slot as reserved for 3 seconds (allows re-add without position jump)
+    positionSlotTTL.set(id, Date.now() + 3000);
+    
+    // Keep the slot in assignments (just mark as inactive) instead of removing
+    // This prevents all other agents from shifting positions
     delete agentPositions[id];
-    
-    // Remove from assignments and reindex others
-    positionAssignments = positionAssignments.filter(agentId => agentId !== id);
-    
-    // Rebuild agentPositions with new indices
-    positionAssignments.forEach((agentId, newIndex) => {
-      agentPositions[agentId] = newIndex;
-    });
   }
 }
 
@@ -270,6 +290,8 @@ class Sprite {
     this.y = y;
     this.tx = x;    // target x
     this.ty = y;    // target y
+    this.vx = 0;    // velocity x for spring physics
+    this.vy = 0;    // velocity y for spring physics
     this.hue = hue;
     this.isSubagent = isSubagent;
     this.phase = Math.random() * Math.PI * 2;  // pulse phase offset
@@ -314,7 +336,7 @@ class Sprite {
     
     // Expression (for error state)
     this.expression = "normal";
-}
+  }
 }
 
 function drawSpeechBubble(p, x, y, text, hue, alpha) {
@@ -495,7 +517,7 @@ function drawFiddlingObject(p, sp, status, r, now, alpha) {
 
 // ── Update status transition ─────────────────────────────────────────────────
 
-function updateStatusTransition(sp, newStatus, deltaTime = 0.016) {
+function updateStatusTransition(sp, newStatus, deltaTime = 1/60) {
   const cfg = STATUS_CFG[newStatus] || STATUS_CFG.idle;
   
   // If status changed, update target values
@@ -512,8 +534,9 @@ function updateStatusTransition(sp, newStatus, deltaTime = 0.016) {
     else sp.targetBobSpeed = 2;
   }
   
-  // Smoothly interpolate current values toward targets
-  const lerpFactor = deltaTime * 4;  // ~0.25 seconds for noticeable change
+  // Use eased lerp for smoother, more gradual transitions
+  // This creates a more natural "breathing" effect during status changes
+  const lerpFactor = easeInOutCubic(deltaTime * 3);  // ~0.3 seconds for full transition
   
   sp.currentPulse += (sp.targetPulse - sp.currentPulse) * lerpFactor;
   sp.currentRadius += (sp.targetRadius - sp.currentRadius) * lerpFactor;
@@ -634,42 +657,51 @@ new p5((p) => {
     // ── Draw main agents ───────────────────────────────────────────────────
     for (const a of mainAgents) {
       try {
-        // Get current target position (radial layout)
+        // Calculate target position ONCE per frame (radial layout)
         let [dx, dy] = getAgentPosition(a.id, p.width, p.height);
 
-      // Ensure sprite exists
-      if (!a._sprite) {
-        a._sprite = new Sprite(dx, dy - 20, a.color);
-        // Initialize visual state from current status config
-        const cfg = STATUS_CFG[a.status] || STATUS_CFG.idle;
-        a._sprite.currentStatus = a.status;
-        a._sprite.targetStatus = a.status;
-        a._sprite.currentPulse = cfg.pulse;
-        a._sprite.currentRadius = cfg.radius;
-        a._sprite.currentAlpha = cfg.opacity;
-        a._sprite.targetPulse = cfg.pulse;
-        a._sprite.targetRadius = cfg.radius;
-        a._sprite.targetAlpha = cfg.opacity;
-      }
-      const sp = a._sprite;
+        // Ensure sprite exists
+        if (!a._sprite) {
+          a._sprite = new Sprite(dx, dy - 20, a.color);
+          // Initialize visual state from current status config
+          const cfg = STATUS_CFG[a.status] || STATUS_CFG.idle;
+          a._sprite.currentStatus = a.status;
+          a._sprite.targetStatus = a.status;
+          a._sprite.currentPulse = cfg.pulse;
+          a._sprite.currentRadius = cfg.radius;
+          a._sprite.currentAlpha = cfg.opacity;
+          a._sprite.targetPulse = cfg.pulse;
+          a._sprite.targetRadius = cfg.radius;
+          a._sprite.targetAlpha = cfg.opacity;
+        }
+        const sp = a._sprite;
 
-      // Update status transition (smooth morph between states)
-      updateStatusTransition(sp, a.status);
-      
-      // Update wandering/pacing behavior
-      updateWander(sp, now);
-      
-      // Update blinking
-      updateBlinking(sp, now);
+        // Update status transition (smooth morph between states)
+        updateStatusTransition(sp, a.status);
+        
+        // Update wandering/pacing behavior
+        updateWander(sp, now);
+        
+        // Update blinking
+        updateBlinking(sp, now);
 
-      // Re-get position (may have changed if agent count changed)
-      [dx, dy] = getAgentPosition(a.id, p.width, p.height);
-      
-      // Move sprite toward target + wander offset (lerp)
-      sp.tx = dx + sp.wanderOffset.x;
-      sp.ty = dy - 20 + sp.wanderOffset.y;
-      sp.x += (sp.tx - sp.x) * 0.06;
-      sp.y += (sp.ty - sp.y) * 0.06;
+        // Move sprite toward target + wander offset (with spring physics)
+        sp.tx = dx + sp.wanderOffset.x;
+        sp.ty = dy - 20 + sp.wanderOffset.y;
+        
+        // Spring physics for natural, smooth movement
+        // Higher stiffness = faster response, higher damping = less oscillation
+        const stiffness = 0.03;
+        const damping = 0.85;
+        
+        const dxPos = sp.tx - sp.x;
+        const dyPos = sp.ty - sp.y;
+        
+        sp.vx = sp.vx * damping + dxPos * stiffness;
+        sp.vy = sp.vy * damping + dyPos * stiffness;
+        
+        sp.x += sp.vx;
+        sp.y += sp.vy;
 
       // Use smoothly interpolated visual values (no blending between configs)
       const pulse = Math.sin(now * sp.currentPulse * Math.PI * 2 + sp.phase);
@@ -710,19 +742,14 @@ new p5((p) => {
         p.ellipse(drawX, drawY, (r + 18) * 2, (r + 18) * 2);
       }
 
-      // Bob / walk animation - status specific (smoothed for elegance)
+      // Bob / walk animation - use interpolated bob speed for smooth transitions
+      // Map status to base amplitude for consistent motion
+      let bobAmplitude = 2;
+      if (a.status === "editing") bobAmplitude = 3;
+      else if (a.status === "running") bobAmplitude = 4;
+      
       // Use interpolated bob speed for smooth transitions between states
-      let bobY;
-      if (a.status === "editing") {
-        // Gentle bouncy editing motion
-        bobY = Math.abs(Math.sin(now * 3 + sp.phase)) * 3 - 0.5;
-      } else if (a.status === "running") {
-        // Smooth running bob
-        bobY = Math.sin(now * 5 + sp.phase) * 4;
-      } else {
-        // Default bob using interpolated speed
-        bobY = Math.sin(now * sp.currentBobSpeed + sp.phase) * 2;
-      }
+      bobY = Math.sin(now * sp.currentBobSpeed + sp.phase) * bobAmplitude;
 
       // Main blob body
       p.noStroke();
@@ -820,6 +847,10 @@ new p5((p) => {
         if (!parent || !parent._sprite) continue;
 
         const parentSprite = parent._sprite;
+        // Use parent's TARGET position (tx, ty) for stable orbit center
+        // This prevents compounded motion when parent is lerping
+        const orbitCenterX = parentSprite.tx;
+        const orbitCenterY = parentSprite.ty;
         const isSubagent = true;
         const isIdle = a.status === "idle";
 
@@ -868,15 +899,15 @@ new p5((p) => {
         const alpha = sp.currentAlpha * fadeAlpha;
         const bobY = Math.sin(now * sp.currentBobSpeed * 0.5 + sp.phase) * 2;
 
-        // Calculate draw position
-        const drawX = parentSprite.x + orbitX;
-        const drawY = parentSprite.y + orbitY + bobY;
+        // Calculate draw position using stable orbit center
+        const drawX = orbitCenterX + orbitX;
+        const drawY = orbitCenterY + orbitY + bobY;
 
         // Draw connecting line to parent (subtle)
         const lineAlpha = 30 * (alpha / 255);  // Scale with current alpha
         p.stroke(subagentHue, 60, 50, lineAlpha * fadeAlpha);
         p.strokeWeight(1);
-        p.line(parentSprite.x, parentSprite.y - 10, drawX, drawY - r);
+        p.line(orbitCenterX, orbitCenterY - 10, drawX, drawY - r);
         p.noStroke();
 
         // Shadow
