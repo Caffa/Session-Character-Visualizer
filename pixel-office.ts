@@ -36,6 +36,7 @@ interface AgentState {
 	since: number; // timestamp of last status change (ms)
 	color: number; // hue 0–360, derived from session id
 	idleSince: number | null; // timestamp when subagent went idle (for cleanup)
+	activityScale: number; // 1.0 = normal, up to 2.5 (based on files modified)
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -89,9 +90,46 @@ export function toolLabel(tool: string): string {
 	return labels[tool.toLowerCase()] ?? `🔧 ${tool}`;
 }
 
+const IGNORE_PATTERNS = [
+	"node_modules",
+	".git",
+	"dist",
+	"build",
+	"__pycache__",
+	".venv",
+	"vendor",
+	".next",
+	".cache",
+	".DS_Store",
+];
+
+const agentFileActivity = new Map<string, Set<string>>();
+
+function isIgnored(filePath: string): boolean {
+	const parts = filePath.split(/[/\\]/);
+	return parts.some((part) => IGNORE_PATTERNS.includes(part));
+}
+
+function recordFileActivity(agentId: string, filePath: string): void {
+	if (!agentFileActivity.has(agentId)) {
+		agentFileActivity.set(agentId, new Set());
+	}
+	agentFileActivity.get(agentId)!.add(filePath);
+}
+
+function getActivityScale(agentId: string): number {
+	const files = agentFileActivity.get(agentId)?.size ?? 0;
+	// Logarithmic scale: 1 file → 1.0, 10 files → 1.15, 100 files → 1.3, 1000 files → 1.45
+	const scale = 1.0 + Math.log10(Math.max(files, 1)) * 0.15;
+	return Math.min(Math.max(scale, 1.0), 2.5);
+}
+
 // ─── Plugin ───────────────────────────────────────────────────────────────────
 
 export const PixelOfficePlugin: Plugin = async ({ directory, client, $ }) => {
+	// Clear any stale activity data from previous sessions
+	agentFileActivity.clear();
+
 	const PORT = 2727;
 	const agents = new Map<string, AgentState>();
 	const clients = new Set<globalThis.WebSocket>();

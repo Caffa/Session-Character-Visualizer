@@ -256,15 +256,23 @@ function getAgentPosition(id, W, H) {
   if (!(id in agentPositions)) {
     // Check if we have a reserved slot for this agent (from recent removal)
     if (positionSlotTTL.has(id)) {
-      // Find the old index from assignments (search before it was removed)
-      agentPositions[id] = positionAssignments.length;
+      // Find original index of this agent in positionAssignments
+      const originalIndex = positionAssignments.indexOf(id);
+      if (originalIndex !== -1) {
+        // Restore original index
+        agentPositions[id] = originalIndex;
+      } else {
+        // Fallback: not found in assignments, use next slot
+        agentPositions[id] = positionAssignments.length;
+        positionAssignments.push(id);
+      }
     } else {
       // New agent gets next available slot
       agentPositions[id] = positionAssignments.length;
+      positionAssignments.push(id);
     }
-    positionAssignments.push(id);
   }
-  
+
   const index = agentPositions[id];
   const totalAgents = positionAssignments.length;
   return calculateRadialPos(index, totalAgents, W, H);
@@ -847,10 +855,10 @@ new p5((p) => {
         if (!parent || !parent._sprite) continue;
 
         const parentSprite = parent._sprite;
-        // Use parent's TARGET position (tx, ty) for stable orbit center
-        // This prevents compounded motion when parent is lerping
-        const orbitCenterX = parentSprite.tx;
-        const orbitCenterY = parentSprite.ty;
+        // Use parent's CURRENT position for accurate orbit center
+        // This ensures subagents orbit around where the parent actually is
+        const orbitCenterX = parentSprite.x + parentSprite.wanderOffset.x;
+        const orbitCenterY = parentSprite.y + parentSprite.wanderOffset.y;
         const isSubagent = true;
         const isIdle = subagent.status === "idle";
 
