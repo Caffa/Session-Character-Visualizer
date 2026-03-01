@@ -651,66 +651,66 @@ new p5((p) => {
     const agentList = Object.values(agents);
 
     // Separate main agents from subagents
-    const mainAgents = agentList.filter(a => !a.parentID);
-    const subAgents = agentList.filter(a => a.parentID);
+    const mainAgents = agentList.filter(agent => !agent.parentID);
+    const subAgents = agentList.filter(agent => agent.parentID);
 
     // ── Draw main agents ───────────────────────────────────────────────────
-    for (const a of mainAgents) {
+    for (const agent of mainAgents) {
       try {
         // Calculate target position ONCE per frame (radial layout)
-        let [dx, dy] = getAgentPosition(a.id, p.width, p.height);
+        let [targetX, targetY] = getAgentPosition(agent.id, p.width, p.height);
 
         // Ensure sprite exists
-        if (!a._sprite) {
-          a._sprite = new Sprite(dx, dy - 20, a.color);
+        if (!agent._sprite) {
+          agent._sprite = new Sprite(targetX, targetY - 20, agent.color);
           // Initialize visual state from current status config
-          const cfg = STATUS_CFG[a.status] || STATUS_CFG.idle;
-          a._sprite.currentStatus = a.status;
-          a._sprite.targetStatus = a.status;
-          a._sprite.currentPulse = cfg.pulse;
-          a._sprite.currentRadius = cfg.radius;
-          a._sprite.currentAlpha = cfg.opacity;
-          a._sprite.targetPulse = cfg.pulse;
-          a._sprite.targetRadius = cfg.radius;
-          a._sprite.targetAlpha = cfg.opacity;
+          const statusConfig = STATUS_CFG[agent.status] || STATUS_CFG.idle;
+          agent._sprite.currentStatus = agent.status;
+          agent._sprite.targetStatus = agent.status;
+          agent._sprite.currentPulse = statusConfig.pulse;
+          agent._sprite.currentRadius = statusConfig.radius;
+          agent._sprite.currentAlpha = statusConfig.opacity;
+          agent._sprite.targetPulse = statusConfig.pulse;
+          agent._sprite.targetRadius = statusConfig.radius;
+          agent._sprite.targetAlpha = statusConfig.opacity;
         }
-        const sp = a._sprite;
+        const sprite = agent._sprite;
 
         // Update status transition (smooth morph between states)
-        updateStatusTransition(sp, a.status);
+        updateStatusTransition(sprite, agent.status);
         
         // Update wandering/pacing behavior
-        updateWander(sp, now);
+        updateWander(sprite, now);
         
         // Update blinking
-        updateBlinking(sp, now);
+        updateBlinking(sprite, now);
 
         // Move sprite toward target + wander offset (with spring physics)
-        sp.tx = dx + sp.wanderOffset.x;
-        sp.ty = dy - 20 + sp.wanderOffset.y;
+        sprite.tx = targetX + sprite.wanderOffset.x;
+        sprite.ty = targetY - 20 + sprite.wanderOffset.y;
         
         // Spring physics for natural, smooth movement
         // Higher stiffness = faster response, higher damping = less oscillation
         const stiffness = 0.03;
         const damping = 0.85;
         
-        const dxPos = sp.tx - sp.x;
-        const dyPos = sp.ty - sp.y;
+        const dxPos = sprite.tx - sprite.x;
+        const dyPos = sprite.ty - sprite.y;
         
-        sp.vx = sp.vx * damping + dxPos * stiffness;
-        sp.vy = sp.vy * damping + dyPos * stiffness;
+        sprite.vx = sprite.vx * damping + dxPos * stiffness;
+        sprite.vy = sprite.vy * damping + dyPos * stiffness;
         
-        sp.x += sp.vx;
-        sp.y += sp.vy;
+        sprite.x += sprite.vx;
+        sprite.y += sprite.vy;
 
       // Use smoothly interpolated visual values (no blending between configs)
-      const pulse = Math.sin(now * sp.currentPulse * Math.PI * 2 + sp.phase);
-      const r = sp.currentRadius + pulse * 3;
-      const alpha = sp.currentAlpha;
+      const pulse = Math.sin(now * sprite.currentPulse * Math.PI * 2 + sprite.phase);
+      const radius = sprite.currentRadius + pulse * 3;
+      const alpha = sprite.currentAlpha;
 
       // Status-specific effects
-      const isError = a.status === "error";
-      const isWaiting = a.status === "waiting";
+      const isError = agent.status === "error";
+      const isWaiting = agent.status === "waiting";
       
       // Nervous shake for waiting state - gentle oscillation
       const shakeX = isWaiting ? Math.sin(now * 6) * 1.5 : 0;
@@ -719,104 +719,104 @@ new p5((p) => {
       // Subtle vibration for error state - reduced frequency for elegance
       const vibrateX = isError ? Math.sin(now * 12) * 1 : 0;
       
-      const drawX = sp.x + shakeX + vibrateX;
-      const drawY = sp.y + shakeY;
+      const drawX = sprite.x + shakeX + vibrateX;
+      const drawY = sprite.y + shakeY;
 
       // Glow ring for active states
-      const statusCfg = STATUS_CFG[a.status] || STATUS_CFG.idle;
-      if (statusCfg.ring) {
+      const currentStatusConfig = STATUS_CFG[agent.status] || STATUS_CFG.idle;
+      if (currentStatusConfig.ring) {
         p.noFill();
         p.strokeWeight(2);
         
         // Different ring styles based on status (smoothed)
         let ringPulse = now * 2.5;
-        if (a.status === "thinking") ringPulse = now * 1;  // Slow, expanding
-        if (a.status === "editing") ringPulse = now * 4;   // Energetic
-        if (a.status === "waiting") ringPulse = now * 2;  // Moderate
+        if (agent.status === "thinking") ringPulse = now * 1;  // Slow, expanding
+        if (agent.status === "editing") ringPulse = now * 4;   // Energetic
+        if (agent.status === "waiting") ringPulse = now * 2;  // Moderate
         
-        const glowAlpha = (0.3 + 0.2 * Math.sin(ringPulse + sp.phase)) * alpha;
-        p.stroke(p.color(`hsla(${a.color}, 80%, 65%, ${glowAlpha / 255})`));
-        p.ellipse(drawX, drawY, (r + 10) * 2, (r + 10) * 2);
+        const glowAlpha = (0.3 + 0.2 * Math.sin(ringPulse + sprite.phase)) * alpha;
+        p.stroke(p.color(`hsla(${agent.color}, 80%, 65%, ${glowAlpha / 255})`));
+        p.ellipse(drawX, drawY, (radius + 10) * 2, (radius + 10) * 2);
         p.strokeWeight(1);
-        p.stroke(p.color(`hsla(${a.color}, 60%, 80%, ${glowAlpha * 0.5 / 255})`));
-        p.ellipse(drawX, drawY, (r + 18) * 2, (r + 18) * 2);
+        p.stroke(p.color(`hsla(${agent.color}, 60%, 80%, ${glowAlpha * 0.5 / 255})`));
+        p.ellipse(drawX, drawY, (radius + 18) * 2, (radius + 18) * 2);
       }
 
       // Bob / walk animation - use interpolated bob speed for smooth transitions
       // Map status to base amplitude for consistent motion
       let bobAmplitude = 2;
-      if (a.status === "editing") bobAmplitude = 3;
-      else if (a.status === "running") bobAmplitude = 4;
+      if (agent.status === "editing") bobAmplitude = 3;
+      else if (agent.status === "running") bobAmplitude = 4;
       
       // Use interpolated bob speed for smooth transitions between states
-      bobY = Math.sin(now * sp.currentBobSpeed + sp.phase) * bobAmplitude;
+      let bobY = Math.sin(now * sprite.currentBobSpeed + sprite.phase) * bobAmplitude;
 
       // Main blob body
       p.noStroke();
       // Shadow (affected by wander)
       p.fill(0, 0, 0, 60);
-      p.ellipse(drawX + 2 + sp.wanderOffset.x * 0.3, drawY + r * 0.8 + 4, r * 1.6, r * 0.5);
+      p.ellipse(drawX + 2 + sprite.wanderOffset.x * 0.3, drawY + radius * 0.8 + 4, radius * 1.6, radius * 0.5);
 
       // Body gradient simulation - add red tint for error state
-      const bodyHue = isError ? (a.color + 20) % 360 : a.color;
+      const bodyHue = isError ? (agent.color + 20) % 360 : agent.color;
       p.fill(p.color(`hsla(${bodyHue}, 70%, 35%, ${(alpha * 0.6) / 255})`));
-      p.ellipse(drawX, drawY + bobY, r * 2, r * 2);
+      p.ellipse(drawX, drawY + bobY, radius * 2, radius * 2);
       p.fill(p.color(`hsla(${bodyHue}, 80%, 60%, ${alpha / 255})`));
-      p.ellipse(drawX - r * 0.1, drawY + bobY - r * 0.05, r * 1.7, r * 1.7);
+      p.ellipse(drawX - radius * 0.1, drawY + bobY - radius * 0.05, radius * 1.7, radius * 1.7);
       
       // Red pulse for error
       if (isError) {
         p.fill(255, 80, 80, alpha * 0.15 * (0.5 + 0.5 * Math.sin(now * 5)));
-        p.ellipse(drawX, drawY + bobY, r * 2.2, r * 2.2);
+        p.ellipse(drawX, drawY + bobY, radius * 2.2, radius * 2.2);
       }
       
       // Highlight
       p.fill(p.color(`hsla(${bodyHue}, 60%, 90%, ${(alpha * 0.35) / 255})`));
-      p.ellipse(drawX - r * 0.25, drawY + bobY - r * 0.3, r * 0.8, r * 0.6);
+      p.ellipse(drawX - radius * 0.25, drawY + bobY - radius * 0.3, radius * 0.8, radius * 0.6);
 
       // Eyes
-      const eyeY = drawY + bobY - r * 0.1;
+      const eyeY = drawY + bobY - radius * 0.1;
       
-      if (sp.isBlinking) {
+      if (sprite.isBlinking) {
         // Closed eyes (horizontal line)
         p.stroke(10, 10, 30, alpha);
         p.strokeWeight(2);
-        p.line(drawX - r * 0.35, eyeY, drawX - r * 0.1, eyeY);
-        p.line(drawX + r * 0.1, eyeY, drawX + r * 0.35, eyeY);
+        p.line(drawX - radius * 0.35, eyeY, drawX - radius * 0.1, eyeY);
+        p.line(drawX + radius * 0.1, eyeY, drawX + radius * 0.35, eyeY);
         p.noStroke();
       } else {
         // Open eyes
         p.fill(255, 255, 255, alpha * 0.9);
-        p.ellipse(drawX - r * 0.22, eyeY, 5, 6);
-        p.ellipse(drawX + r * 0.22, eyeY, 5, 6);
+        p.ellipse(drawX - radius * 0.22, eyeY, 5, 6);
+        p.ellipse(drawX + radius * 0.22, eyeY, 5, 6);
         
         // Pupils - status specific movement
         let pupilShift = 0;
         let pupilV = 1;
         
-        if (a.status === "thinking") {
+        if (agent.status === "thinking") {
           pupilShift = Math.sin(now * 3) * 1.5;  // Side to side
           pupilV = 0;  // Look up slightly
-        } else if (a.status === "reading") {
+        } else if (agent.status === "reading") {
           pupilShift = Math.sin(now * 0.5) * 0.5;  // Subtle movement
           pupilV = 0.5;
-        } else if (a.status === "running") {
+        } else if (agent.status === "running") {
           pupilShift = Math.sin(now * 10) * 1;  // Fast darting
-        } else if (a.status === "waiting") {
+        } else if (agent.status === "waiting") {
           pupilShift = Math.sin(now * 2) * 1;  // Looking around nervously
         }
         
         p.fill(10, 10, 30, alpha);
-        p.ellipse(drawX - r * 0.22 + pupilShift, eyeY + pupilV, 2.5, 3);
-        p.ellipse(drawX + r * 0.22 + pupilShift, eyeY + pupilV, 2.5, 3);
+        p.ellipse(drawX - radius * 0.22 + pupilShift, eyeY + pupilV, 2.5, 3);
+        p.ellipse(drawX + radius * 0.22 + pupilShift, eyeY + pupilV, 2.5, 3);
         
         // Error expression (X_X eyes)
         if (isError) {
           p.stroke(10, 10, 30, alpha);
           p.strokeWeight(1.5);
           // X eyes
-          const ex1 = drawX - r * 0.22, ey1 = eyeY - 1;
-          const ex2 = drawX + r * 0.22, ey2 = eyeY - 1;
+          const ex1 = drawX - radius * 0.22, ey1 = eyeY - 1;
+          const ex2 = drawX + radius * 0.22, ey2 = eyeY - 1;
           const es = 2.5;
           p.line(ex1 - es, ey1 - es, ex1 + es, ey1 + es);
           p.line(ex1 - es, ey1 + es, ex1 + es, ey1 - es);
@@ -827,23 +827,23 @@ new p5((p) => {
       }
 
       // Fiddling objects based on status
-      drawFiddlingObject(p, sp, a.status, r, now, alpha);
+      drawFiddlingObject(p, sprite, agent.status, radius, now, alpha);
 
       // Speech bubble
-      drawSpeechBubble(p, drawX, drawY + bobY, a.message, a.color, alpha);
+      drawSpeechBubble(p, drawX, drawY + bobY, agent.message, agent.color, alpha);
 
       // Name tag
-      drawNameTag(p, drawX, drawY, a.folder, a.title, a.color, a.status);
+      drawNameTag(p, drawX, drawY, agent.folder, agent.title, agent.color, agent.status);
       } catch {
         // Skip this agent if rendering fails - prevents freeze on disconnect
       }
     }
 
     // ── Draw subagents (smaller, orbiting around parent) ────────────────────
-    for (const a of subAgents) {
+    for (const subagent of subAgents) {
       try {
         // Find parent agent to orbit around
-        const parent = agents[a.parentID];
+        const parent = agents[subagent.parentID];
         if (!parent || !parent._sprite) continue;
 
         const parentSprite = parent._sprite;
@@ -852,7 +852,7 @@ new p5((p) => {
         const orbitCenterX = parentSprite.tx;
         const orbitCenterY = parentSprite.ty;
         const isSubagent = true;
-        const isIdle = a.status === "idle";
+        const isIdle = subagent.status === "idle";
 
         // Subagent color is based on parent's hue + offset
         const subagentHue = (parent.color + 30) % 360;
@@ -860,94 +860,94 @@ new p5((p) => {
         const lightness = 55;
 
         // Ensure sprite exists with subagent flag
-        if (!a._sprite) {
-          a._sprite = new Sprite(parentSprite.x, parentSprite.y, subagentHue, true);
+        if (!subagent._sprite) {
+          subagent._sprite = new Sprite(parentSprite.x, parentSprite.y, subagentHue, true);
           // Initialize visual state from current status config
-          const cfg = STATUS_CFG[a.status] || STATUS_CFG.idle;
-          a._sprite.currentStatus = a.status;
-          a._sprite.targetStatus = a.status;
-          a._sprite.currentPulse = cfg.pulse;
-          a._sprite.currentRadius = cfg.radius * 0.6;  // 60% of main agent size
-          a._sprite.currentAlpha = cfg.opacity;
-          a._sprite.targetPulse = cfg.pulse;
-          a._sprite.targetRadius = cfg.radius * 0.6;
-          a._sprite.targetAlpha = cfg.opacity;
+          const statusConfig = STATUS_CFG[subagent.status] || STATUS_CFG.idle;
+          subagent._sprite.currentStatus = subagent.status;
+          subagent._sprite.targetStatus = subagent.status;
+          subagent._sprite.currentPulse = statusConfig.pulse;
+          subagent._sprite.currentRadius = statusConfig.radius * 0.6;  // 60% of main agent size
+          subagent._sprite.currentAlpha = statusConfig.opacity;
+          subagent._sprite.targetPulse = statusConfig.pulse;
+          subagent._sprite.targetRadius = statusConfig.radius * 0.6;
+          subagent._sprite.targetAlpha = statusConfig.opacity;
         }
-        const sp = a._sprite;
-        sp.isSubagent = true;
+        const sprite = subagent._sprite;
+        sprite.isSubagent = true;
 
         // Update status transition
-        updateStatusTransition(sp, a.status);
-        updateBlinking(sp, now);
+        updateStatusTransition(sprite, subagent.status);
+        updateBlinking(sprite, now);
 
         // Calculate fade out if agent is being removed
         let fadeAlpha = 1.0;
-        if (a._fadeOutStart) {
-          const fadeProgress = (Date.now() - a._fadeOutStart) / 1000;
+        if (subagent._fadeOutStart) {
+          const fadeProgress = (Date.now() - subagent._fadeOutStart) / 1000;
           fadeAlpha = 1.0 - fadeProgress;
           if (fadeAlpha < 0) fadeAlpha = 0;
         }
 
         // Update orbit position around parent
-        sp.orbitAngle += sp.orbitSpeed * 0.5 * (1/60);  // Consistent speed
-        const orbitX = Math.cos(sp.orbitAngle) * sp.orbitRadius;
-        const orbitY = Math.sin(sp.orbitAngle * 0.7) * sp.orbitRadius * 0.4 + 15;
+        sprite.orbitAngle += sprite.orbitSpeed * 0.5 * (1/60);  // Consistent speed
+        const orbitOffsetX = Math.cos(sprite.orbitAngle) * sprite.orbitRadius;
+        const orbitOffsetY = Math.sin(sprite.orbitAngle * 0.7) * sprite.orbitRadius * 0.4 + 15;
 
         // Use interpolated visual values for smooth transitions
-        const pulse = Math.sin(now * sp.currentPulse + sp.phase);
-        const r = sp.currentRadius + pulse * 2;
-        const alpha = sp.currentAlpha * fadeAlpha;
-        const bobY = Math.sin(now * sp.currentBobSpeed * 0.5 + sp.phase) * 2;
+        const pulse = Math.sin(now * sprite.currentPulse + sprite.phase);
+        const radius = sprite.currentRadius + pulse * 2;
+        const alpha = sprite.currentAlpha * fadeAlpha;
+        const bobY = Math.sin(now * sprite.currentBobSpeed * 0.5 + sprite.phase) * 2;
 
         // Calculate draw position using stable orbit center
-        const drawX = orbitCenterX + orbitX;
-        const drawY = orbitCenterY + orbitY + bobY;
+        const drawX = orbitCenterX + orbitOffsetX;
+        const drawY = orbitCenterY + orbitOffsetY + bobY;
 
         // Draw connecting line to parent (subtle)
         const lineAlpha = 30 * (alpha / 255);  // Scale with current alpha
         p.stroke(subagentHue, 60, 50, lineAlpha * fadeAlpha);
         p.strokeWeight(1);
-        p.line(orbitCenterX, orbitCenterY - 10, drawX, drawY - r);
+        p.line(orbitCenterX, orbitCenterY - 10, drawX, drawY - radius);
         p.noStroke();
 
         // Shadow
         p.fill(0, 0, 0, 40 * fadeAlpha);
-        p.ellipse(drawX + 1, drawY + r * 0.6 + 2, r * 1.4, r * 0.4);
+        p.ellipse(drawX + 1, drawY + radius * 0.6 + 2, radius * 1.4, radius * 0.4);
 
         // Body - rounded rectangle for subagents (different from main agents' ellipse)
         p.fill(p.color(`hsla(${subagentHue}, ${saturation}%, ${lightness - 15}%, ${(alpha * 0.7) / 255})`));
         p.rectMode(p.CENTER);
-        p.rect(drawX, drawY, r * 1.8, r * 1.6, r * 0.5);
+        p.rect(drawX, drawY, radius * 1.8, radius * 1.6, radius * 0.5);
         p.fill(p.color(`hsla(${subagentHue}, ${saturation + 5}%, ${lightness}%, ${alpha / 255})`));
-        p.rect(drawX - r * 0.1, drawY - r * 0.1, r * 1.5, r * 1.3, r * 0.4);
+        p.rect(drawX - radius * 0.1, drawY - radius * 0.1, radius * 1.5, radius * 1.3, radius * 0.4);
         p.rectMode(p.CORNER);
 
         // Highlight
         const highlightAlpha = 0.3 * (alpha / 255);
         p.fill(p.color(`hsla(${subagentHue}, 50%, 85%, ${highlightAlpha * fadeAlpha})`));
-        p.ellipse(drawX - r * 0.3, drawY - r * 0.35, r * 0.5, r * 0.4);
+        p.ellipse(drawX - radius * 0.3, drawY - radius * 0.35, radius * 0.5, radius * 0.4);
 
         // Eyes - smaller for subagent
-        const eyeY = drawY - r * 0.1;
+        const eyeY = drawY - radius * 0.1;
         const eyeSize = 3;
         const eyeAlpha = alpha;
-        if (sp.isBlinking) {
+        if (sprite.isBlinking) {
           p.stroke(10, 10, 30, eyeAlpha);
           p.strokeWeight(1.5);
-          p.line(drawX - r * 0.3, eyeY, drawX - r * 0.1, eyeY);
-          p.line(drawX + r * 0.1, eyeY, drawX + r * 0.3, eyeY);
+          p.line(drawX - radius * 0.3, eyeY, drawX - radius * 0.1, eyeY);
+          p.line(drawX + radius * 0.1, eyeY, drawX + radius * 0.3, eyeY);
           p.noStroke();
         } else {
           p.fill(255, 255, 255, eyeAlpha * 0.9);
-          p.ellipse(drawX - r * 0.2, eyeY, eyeSize + 1, eyeSize + 2);
-          p.ellipse(drawX + r * 0.2, eyeY, eyeSize + 1, eyeSize + 2);
+          p.ellipse(drawX - radius * 0.2, eyeY, eyeSize + 1, eyeSize + 2);
+          p.ellipse(drawX + radius * 0.2, eyeY, eyeSize + 1, eyeSize + 2);
           p.fill(10, 10, 30, eyeAlpha);
-          p.ellipse(drawX - r * 0.2, eyeY, 2, 2.5);
-          p.ellipse(drawX + r * 0.2, eyeY, 2, 2.5);
+          p.ellipse(drawX - radius * 0.2, eyeY, 2, 2.5);
+          p.ellipse(drawX + radius * 0.2, eyeY, 2, 2.5);
         }
 
         // Speech bubble (smaller for subagent)
-        drawSpeechBubbleSubagent(p, drawX, drawY + bobY, a.message, subagentHue, alpha);
+        drawSpeechBubbleSubagent(p, drawX, drawY + bobY, subagent.message, subagentHue, alpha);
       } catch {
         // Skip this subagent if rendering fails - prevents freeze on disconnect
       }

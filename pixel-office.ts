@@ -461,12 +461,12 @@ export const PixelOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 
 		// Unified event hook - handles all session events
 		event: async ({ event }) => {
-			const props = event.properties as Record<string, unknown>;
+			const eventProps = event.properties as Record<string, unknown>;
 
 			switch (event.type) {
 				// New session created
 				case "session.created": {
-					const sessionInfo = props.info as {
+					const sessionInfo = eventProps.info as {
 						id: string;
 						parentID?: string;
 						title: string;
@@ -504,7 +504,7 @@ export const PixelOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 
 				// Session updated (includes when session is resumed/focused)
 				case "session.updated": {
-					const sessionInfo = props.info as {
+					const sessionInfo = eventProps.info as {
 						id: string;
 						title?: string;
 					};
@@ -587,7 +587,7 @@ export const PixelOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 
 				// Session deleted / closed
 				case "session.deleted": {
-					const deletedSessionInfo = props.info as { id: string };
+					const deletedSessionInfo = eventProps.info as { id: string };
 					agents.delete(deletedSessionInfo.id);
 					broadcast();
 					break;
@@ -595,7 +595,7 @@ export const PixelOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 
 				// Session went idle (agent finished its turn)
 				case "session.idle": {
-					const sessionID = props.sessionID as string;
+					const sessionID = eventProps.sessionID as string;
 					if (!sessionID || !agents.has(sessionID)) return;
 					const agent = agents.get(sessionID)!;
 					const isSubagent = agent.parentID !== null;
@@ -610,8 +610,8 @@ export const PixelOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 
 				// Status updates (thinking, etc)
 				case "session.status": {
-					const sessionID = props.sessionID as string;
-					const status = (props.status as string).toLowerCase();
+					const sessionID = eventProps.sessionID as string;
+					const status = (eventProps.status as string).toLowerCase();
 					if (!sessionID || !agents.has(sessionID)) return;
 					if (status === "thinking" || status === "generating") {
 						updateAgent(sessionID, {
@@ -624,7 +624,7 @@ export const PixelOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 
 				// Session error
 				case "session.error": {
-					const sessionID = props.sessionID as string;
+					const sessionID = eventProps.sessionID as string;
 					if (!sessionID || !agents.has(sessionID)) return;
 					updateAgent(sessionID, { status: "error", message: "❌ error" });
 					break;
@@ -632,7 +632,7 @@ export const PixelOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 
 				// Message updated — grab last user-visible content for speech bubble
 				case "message.updated": {
-					const messageInfo = props.info as {
+					const messageInfo = eventProps.info as {
 						id: string;
 						sessionID: string;
 						role: string;
@@ -650,7 +650,7 @@ export const PixelOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 
 				// Permission needed — agent is blocked waiting for human
 				case "permission.updated": {
-					const sessionID = (props as { sessionID: string }).sessionID;
+					const sessionID = (eventProps as { sessionID: string }).sessionID;
 					if (!sessionID || !agents.has(sessionID)) return;
 					updateAgent(sessionID, {
 						status: "waiting",
@@ -660,7 +660,7 @@ export const PixelOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 				}
 
 				case "permission.replied": {
-					const sessionID = (props as { sessionID: string }).sessionID;
+					const sessionID = (eventProps as { sessionID: string }).sessionID;
 					if (!sessionID || !agents.has(sessionID)) return;
 					updateAgent(sessionID, {
 						status: "thinking",
