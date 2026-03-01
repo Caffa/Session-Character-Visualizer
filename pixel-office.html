@@ -668,6 +668,10 @@ new p5((p) => {
         // Calculate target position ONCE per frame (radial layout)
         let [targetX, targetY] = getAgentPosition(agent.id, p.width, p.height);
 
+        // Activity scaling for chubby appearance
+        const scale = agent.activityScale || 1.0;
+        const widthBias = 1.2;
+
         // Ensure sprite exists
         if (!agent._sprite) {
           agent._sprite = new Sprite(targetX, targetY - 20, agent.color);
@@ -763,69 +767,77 @@ new p5((p) => {
       p.noStroke();
       // Shadow (affected by wander)
       p.fill(0, 0, 0, 60);
-      p.ellipse(drawX + 2 + sprite.wanderOffset.x * 0.3, drawY + radius * 0.8 + 4, radius * 1.6, radius * 0.5);
+      p.ellipse(drawX + 2 + sprite.wanderOffset.x * 0.3, drawY + radius * 0.8 + 4, radius * 1.6 * scale * widthBias, radius * 0.5 * scale);
 
       // Body gradient simulation - add red tint for error state
       const bodyHue = isError ? (agent.color + 20) % 360 : agent.color;
       p.fill(p.color(`hsla(${bodyHue}, 70%, 35%, ${(alpha * 0.6) / 255})`));
-      p.ellipse(drawX, drawY + bobY, radius * 2, radius * 2);
+      p.ellipse(drawX, drawY + bobY, radius * 2 * scale * widthBias, radius * 2 * scale);
       p.fill(p.color(`hsla(${bodyHue}, 80%, 60%, ${alpha / 255})`));
-      p.ellipse(drawX - radius * 0.1, drawY + bobY - radius * 0.05, radius * 1.7, radius * 1.7);
+      p.ellipse(drawX - radius * 0.1, drawY + bobY - radius * 0.05, radius * 1.7 * scale * widthBias, radius * 1.7 * scale);
       
       // Red pulse for error
       if (isError) {
         p.fill(255, 80, 80, alpha * 0.15 * (0.5 + 0.5 * Math.sin(now * 5)));
-        p.ellipse(drawX, drawY + bobY, radius * 2.2, radius * 2.2);
+        p.ellipse(drawX, drawY + bobY, radius * 2.2 * scale * widthBias, radius * 2.2 * scale);
       }
-      
+
       // Highlight
       p.fill(p.color(`hsla(${bodyHue}, 60%, 90%, ${(alpha * 0.35) / 255})`));
-      p.ellipse(drawX - radius * 0.25, drawY + bobY - radius * 0.3, radius * 0.8, radius * 0.6);
+      p.ellipse(drawX - radius * 0.25 * scale * widthBias, drawY + bobY - radius * 0.3, radius * 0.8 * scale * widthBias, radius * 0.6 * scale);
 
       // Eyes
       const eyeY = drawY + bobY - radius * 0.1;
-      
+      const eyeScaleX = scale * widthBias;
+      const eyeScaleY = scale;
+
       if (sprite.isBlinking) {
         // Closed eyes (horizontal line)
         p.stroke(10, 10, 30, alpha);
         p.strokeWeight(2);
-        p.line(drawX - radius * 0.35, eyeY, drawX - radius * 0.1, eyeY);
-        p.line(drawX + radius * 0.1, eyeY, drawX + radius * 0.35, eyeY);
+        const eyeSpacing = radius * 0.35 * eyeScaleX;
+        p.line(drawX - eyeSpacing, eyeY, drawX - eyeSpacing * 0.3, eyeY);
+        p.line(drawX + eyeSpacing * 0.3, eyeY, drawX + eyeSpacing, eyeY);
         p.noStroke();
       } else {
         // Open eyes
         p.fill(255, 255, 255, alpha * 0.9);
-        p.ellipse(drawX - radius * 0.22, eyeY, 5, 6);
-        p.ellipse(drawX + radius * 0.22, eyeY, 5, 6);
-        
+        const eyeWidth = 5 * eyeScaleX;
+        const eyeHeight = 6 * eyeScaleY;
+        const eyeXOffset = radius * 0.22 * eyeScaleX;
+        p.ellipse(drawX - eyeXOffset, eyeY, eyeWidth, eyeHeight);
+        p.ellipse(drawX + eyeXOffset, eyeY, eyeWidth, eyeHeight);
+
         // Pupils - status specific movement
         let pupilShift = 0;
         let pupilV = 1;
-        
+
         if (agent.status === "thinking") {
-          pupilShift = Math.sin(now * 3) * 1.5;  // Side to side
-          pupilV = 0;  // Look up slightly
+          pupilShift = Math.sin(now * 3) * 1.5 * eyeScaleX;
+          pupilV = 0;
         } else if (agent.status === "reading") {
-          pupilShift = Math.sin(now * 0.5) * 0.5;  // Subtle movement
+          pupilShift = Math.sin(now * 0.5) * 0.5 * eyeScaleX;
           pupilV = 0.5;
         } else if (agent.status === "running") {
-          pupilShift = Math.sin(now * 10) * 1;  // Fast darting
+          pupilShift = Math.sin(now * 10) * 1 * eyeScaleX;
         } else if (agent.status === "waiting") {
-          pupilShift = Math.sin(now * 2) * 1;  // Looking around nervously
+          pupilShift = Math.sin(now * 2) * 1 * eyeScaleX;
         }
-        
+
+        const pupilWidth = 2.5 * eyeScaleX;
+        const pupilHeight = 3 * eyeScaleY;
         p.fill(10, 10, 30, alpha);
-        p.ellipse(drawX - radius * 0.22 + pupilShift, eyeY + pupilV, 2.5, 3);
-        p.ellipse(drawX + radius * 0.22 + pupilShift, eyeY + pupilV, 2.5, 3);
-        
+        p.ellipse(drawX - eyeXOffset + pupilShift, eyeY + pupilV, pupilWidth, pupilHeight);
+        p.ellipse(drawX + eyeXOffset + pupilShift, eyeY + pupilV, pupilWidth, pupilHeight);
+
         // Error expression (X_X eyes)
         if (isError) {
           p.stroke(10, 10, 30, alpha);
           p.strokeWeight(1.5);
           // X eyes
-          const ex1 = drawX - radius * 0.22, ey1 = eyeY - 1;
-          const ex2 = drawX + radius * 0.22, ey2 = eyeY - 1;
-          const es = 2.5;
+          const ex1 = drawX - eyeXOffset, ey1 = eyeY - 1;
+          const ex2 = drawX + eyeXOffset, ey2 = eyeY - 1;
+          const es = 2.5 * eyeScaleX;
           p.line(ex1 - es, ey1 - es, ex1 + es, ey1 + es);
           p.line(ex1 - es, ey1 + es, ex1 + es, ey1 - es);
           p.line(ex2 - es, ey2 - es, ex2 + es, ey2 + es);

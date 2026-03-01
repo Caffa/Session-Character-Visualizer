@@ -3,14 +3,23 @@
  * Unit tests for helper functions
  */
 
-import { describe, expect, it } from "bun:test";
+import { beforeEach, describe, expect, it } from "bun:test";
 import {
+	agentFileActivity,
 	folderName,
+	getActivityScale,
 	hueFromId,
+	isIgnored,
+	recordFileActivity,
 	TOOL_STATUS,
 	toolLabel,
 	toolStatus,
 } from "../../pixel-office.ts";
+
+// Clear activity tracking before each test
+beforeEach(() => {
+	agentFileActivity.clear();
+});
 
 describe("hueFromId", () => {
 	it("should return consistent hue for same id", () => {
@@ -179,5 +188,120 @@ describe("toolLabel", () => {
 			expect(label.length).toBeGreaterThan(2);
 			expect(label).toContain(" ");
 		}
+	});
+});
+
+describe("isIgnored", () => {
+	it("should ignore common patterns", () => {
+		expect(isIgnored("node_modules/file.ts")).toBe(true);
+		expect(isIgnored(".git/config")).toBe(true);
+		expect(isIgnored("dist/bundle.js")).toBe(true);
+		expect(isIgnored("build/index.html")).toBe(true);
+		expect(isIgnored("__pycache__/module.pyc")).toBe(true);
+		expect(isIgnored(".venv/lib/python")).toBe(true);
+		expect(isIgnored("vendor/package.js")).toBe(true);
+		expect(isIgnored(".next/pages/index.js")).toBe(true);
+		expect(isIgnored(".cache/data.json")).toBe(true);
+		expect(isIgnored(".DS_Store")).toBe(true);
+	});
+
+	it("should not ignore normal files", () => {
+		expect(isIgnored("src/app.ts")).toBe(false);
+		expect(isIgnored("index.html")).toBe(false);
+		expect(isIgnored("components/Button.tsx")).toBe(false);
+		expect(isIgnored("tests/unit/helpers.test.ts")).toBe(false);
+	});
+
+	it("should handle paths with multiple segments", () => {
+		expect(isIgnored("project/node_modules/pkg/file.ts")).toBe(true);
+		expect(isIgnored("src/.git/config")).toBe(true);
+		expect(isIgnored("normal/src/file.ts")).toBe(false);
+	});
+
+	it("should handle Windows-style paths", () => {
+		expect(isIgnored("node_modules\\file.ts")).toBe(true);
+		expect(isIgnored("src\\app.ts")).toBe(false);
+	});
+});
+
+describe("getActivityScale", () => {
+	it("should return 1.0 for 0 files", () => {
+		agentFileActivity.set("test", new Set());
+		expect(getActivityScale("test")).toBe(1.0);
+	});
+
+	it("should return 1.0 for 1 file", () => {
+		const files = new Set(["file1.ts"]);
+		agentFileActivity.set("test", files);
+		expect(getActivityScale("test")).toBeCloseTo(1.0, 1);
+	});
+
+	it("should return ~1.15 for 10 files", () => {
+		const files = new Set(Array.from({ length: 10 }, (_, i) => `file${i}.ts`));
+		agentFileActivity.set("test", files);
+		expect(getActivityScale("test")).toBeCloseTo(1.15, 1);
+	});
+
+	it("should return ~1.3 for 100 files", () => {
+		const files = new Set(Array.from({ length: 100 }, (_, i) => `file${i}.ts`));
+		agentFileActivity.set("test", files);
+		expect(getActivityScale("test")).toBeCloseTo(1.3, 1);
+	});
+
+	it("should return ~1.45 for 1000 files", () => {
+		const files = new Set(
+			Array.from({ length: 1000 }, (_, i) => `file${i}.ts`),
+		);
+		agentFileActivity.set("test", files);
+		expect(getActivityScale("test")).toBeCloseTo(1.45, 1);
+	});
+
+	it("should clamp at 2.5 max", () => {
+		const files = new Set(
+			Array.from({ length: 10000 }, (_, i) => `file${i}.ts`),
+		);
+		agentFileActivity.set("test", files);
+		expect(getActivityScale("test")).toBeLessThanOrEqual(2.5);
+	});
+
+	it("should handle unknown agent id", () => {
+		expect(getActivityScale("unknown-agent")).toBe(1.0);
+	});
+});
+
+describe("recordFileActivity", () => {
+	it("should track unique files", () => {
+		const id = "test-agent";
+		recordFileActivity(id, "file1.ts");
+		recordFileActivity(id, "file2.ts");
+		recordFileActivity(id, "file1.ts"); // duplicate
+
+		expect(agentFileActivity.get(id)?.size).toBe(2);
+	});
+
+	it("should handle multiple agents", () => {
+		recordFileActivity("agent1", "file1.ts");
+		recordFileActivity("agent1", "file2.ts");
+		recordFileActivity("agent2", "file3.ts");
+
+		expect(agentFileActivity.get("agent1")?.size).toBe(2);
+		expect(agentFileActivity.get("agent2")?.size).toBe(1);
+	});
+
+	it("should handle empty file paths", () => {
+		const id = "test-agent";
+		recordFileActivity(id, "");
+		recordFileActivity(id, "file1.ts");
+
+		expect(agentFileActivity.get(id)?.size).toBe(2);
+	});
+
+	it("should handle special characters in file paths", () => {
+		const id = "test-agent";
+		recordFileActivity(id, "file with spaces.ts");
+		recordFileActivity(id, "file-with-dashes.ts");
+		recordFileActivity(id, "file_with_underscores.ts");
+
+		expect(agentFileActivity.get(id)?.size).toBe(3);
 	});
 });

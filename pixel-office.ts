@@ -103,21 +103,21 @@ const IGNORE_PATTERNS = [
 	".DS_Store",
 ];
 
-const agentFileActivity = new Map<string, Set<string>>();
+export const agentFileActivity = new Map<string, Set<string>>();
 
-function isIgnored(filePath: string): boolean {
+export function isIgnored(filePath: string): boolean {
 	const parts = filePath.split(/[/\\]/);
 	return parts.some((part) => IGNORE_PATTERNS.includes(part));
 }
 
-function recordFileActivity(agentId: string, filePath: string): void {
+export function recordFileActivity(agentId: string, filePath: string): void {
 	if (!agentFileActivity.has(agentId)) {
 		agentFileActivity.set(agentId, new Set());
 	}
 	agentFileActivity.get(agentId)!.add(filePath);
 }
 
-function getActivityScale(agentId: string): number {
+export function getActivityScale(agentId: string): number {
 	const files = agentFileActivity.get(agentId)?.size ?? 0;
 	// Logarithmic scale: 1 file → 1.0, 10 files → 1.15, 100 files → 1.3, 1000 files → 1.45
 	const scale = 1.0 + Math.log10(Math.max(files, 1)) * 0.15;
@@ -478,6 +478,27 @@ export const PixelOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 				tool: string;
 				callID: string;
 			};
+
+			// Track file modifications for activity scaling
+			if (["write", "edit", "multiedit"].includes(tool.toLowerCase())) {
+				try {
+					const toolInput = input as any;
+					const filePath = toolInput.filePath || toolInput.path;
+
+					if (filePath && !isIgnored(filePath)) {
+						recordFileActivity(sessionID, filePath);
+
+						if (agents.has(sessionID)) {
+							const agent = agents.get(sessionID)!;
+							agent.activityScale = getActivityScale(sessionID);
+							broadcast();
+						}
+					}
+				} catch {
+					// Silently fail if we can't extract file path
+				}
+			}
+
 			if (!sessionID || !agents.has(sessionID)) return;
 			updateAgent(sessionID, {
 				status: toolStatus(tool),
@@ -532,6 +553,7 @@ export const PixelOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 						since: Date.now(),
 						color: hueFromId(id),
 						idleSince: null,
+						activityScale: 1.0,
 					});
 
 					log("info", `Agent added, total agents: ${agents.size}`);
@@ -568,6 +590,7 @@ export const PixelOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 							since: Date.now(),
 							color: hueFromId(id),
 							idleSince: null,
+							activityScale: 1.0,
 						});
 						log(
 							"info",
@@ -626,7 +649,9 @@ export const PixelOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 				// Session deleted / closed
 				case "session.deleted": {
 					const deletedSessionInfo = eventProps.info as { id: string };
-					agents.delete(deletedSessionInfo.id);
+					const id = deletedSessionInfo.id;
+					agents.delete(id);
+					agentFileActivity.delete(id);
 					broadcast();
 					break;
 				}
