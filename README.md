@@ -8,11 +8,17 @@ Pixel Office creates a blob character visualization of your coding sessions. Eac
 
 ---
 
-## Installation
+## Installation (One-Liner)
 
 ```bash
-git clone <this-repo>
-cd pixel-office
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/Caffa/Session-Character-Visualizer/main/install.sh)"
+```
+
+Or manually:
+
+```bash
+git clone https://github.com/Caffa/Session-Character-Visualizer.git
+cd Session-Character-Visualizer
 bash install.sh
 ```
 
@@ -23,8 +29,8 @@ Restart OpenCode. The viewer opens automatically in your browser.
 ## Quick Start
 
 ```bash
-# Install the plugin
-bash install.sh
+# Install with one-liner
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/Caffa/Session-Character-Visualizer/main/install.sh)"
 
 # Restart OpenCode
 opencode --restart
