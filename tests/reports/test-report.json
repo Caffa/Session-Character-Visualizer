@@ -1,0 +1,48 @@
+{
+  "timestamp": "2026-03-01T03:36:47.187Z",
+  "totalTests": 3,
+  "passed": 2,
+  "failed": 1,
+  "skipped": 0,
+  "duration": 32246,
+  "suites": [
+    {
+      "name": "unit",
+      "tests": 1,
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "name": "integration",
+      "tests": 1,
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "name": "e2e",
+      "tests": 1,
+      "passed": 0,
+      "failed": 1
+    }
+  ],
+  "results": [
+    {
+      "suite": "unit",
+      "test": "unit tests",
+      "status": "passed",
+      "duration": 0
+    },
+    {
+      "suite": "integration",
+      "test": "integration tests",
+      "status": "passed",
+      "duration": 0
+    },
+    {
+      "suite": "e2e",
+      "test": "e2e tests",
+      "status": "failed",
+      "duration": 0
+    }
+  ]
+}

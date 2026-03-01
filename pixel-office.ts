@@ -40,17 +40,17 @@ interface AgentState {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function hueFromId(id: string): number {
+export function hueFromId(id: string): number {
 	let h = 0;
 	for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) & 0xffff;
 	return h % 360;
 }
 
-function folderName(path: string): string {
+export function folderName(path: string): string {
 	return path.split("/").filter(Boolean).pop() ?? path;
 }
 
-const TOOL_STATUS: Record<string, AgentStatus> = {
+export const TOOL_STATUS: Record<string, AgentStatus> = {
 	write: "editing",
 	edit: "editing",
 	multiedit: "editing",
@@ -66,11 +66,11 @@ const TOOL_STATUS: Record<string, AgentStatus> = {
 	todowrite: "editing",
 };
 
-function toolStatus(tool: string): AgentStatus {
+export function toolStatus(tool: string): AgentStatus {
 	return TOOL_STATUS[tool.toLowerCase()] ?? "thinking";
 }
 
-function toolLabel(tool: string): string {
+export function toolLabel(tool: string): string {
 	const labels: Record<string, string> = {
 		write: "✏️ writing",
 		edit: "✏️ editing",
@@ -128,28 +128,40 @@ export const PixelOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 	// WebSocket connection to central server (for non-server instances)
 	let syncWs: WebSocket | null = null;
 
-	function broadcast() {
-		const msg = JSON.stringify({
-			type: "snapshot",
-			agents: [...agents.values()],
-		});
+	// Debounce mechanism to prevent rapid updates
+	let broadcastTimeout: ReturnType<typeof setTimeout> | null = null;
+	const BROADCAST_DEBOUNCE_MS = 50;
 
-		// Send to all connected viewer clients
-		for (const ws of clients) {
-			if (ws.readyState === WebSocket.OPEN) {
-				ws.send(msg);
-			}
+	function broadcast() {
+		// Clear existing timeout to debounce rapid calls
+		if (broadcastTimeout) {
+			clearTimeout(broadcastTimeout);
 		}
 
-		// If we're a client instance, send incremental updates instead of full snapshot
-		// to avoid overwriting other instances' agents
-		if (syncWs && syncWs.readyState === WebSocket.OPEN) {
-			const updateMsg = JSON.stringify({
-				type: "agent_update",
+		broadcastTimeout = setTimeout(() => {
+			broadcastTimeout = null;
+			const msg = JSON.stringify({
+				type: "snapshot",
 				agents: [...agents.values()],
 			});
-			syncWs.send(updateMsg);
-		}
+
+			// Send to all connected viewer clients
+			for (const ws of clients) {
+				if (ws.readyState === WebSocket.OPEN) {
+					ws.send(msg);
+				}
+			}
+
+			// If we're a client instance, send incremental updates instead of full snapshot
+			// to avoid overwriting other instances' agents
+			if (syncWs && syncWs.readyState === WebSocket.OPEN) {
+				const updateMsg = JSON.stringify({
+					type: "agent_update",
+					agents: [...agents.values()],
+				});
+				syncWs.send(updateMsg);
+			}
+		}, BROADCAST_DEBOUNCE_MS);
 	}
 
 	function updateAgent(id: string, patch: Partial<AgentState>) {
@@ -281,7 +293,7 @@ export const PixelOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 					// Handle incoming sync messages from other plugin instances
 					try {
 						const msg = JSON.parse(message.toString());
-						if (msg.type === "agent_update") {
+						if (msg.type === "agent_update" || msg.type === "full_sync") {
 							// Merge incoming agents from client instances - ADD only, don't remove
 							for (const agent of msg.agents) {
 								if (!agents.has(agent.id)) {
@@ -322,6 +334,16 @@ export const PixelOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 
 			syncWs.onopen = () => {
 				log("info", "Connected to existing Pixel Office server as client");
+				// Send full sync of our local agents to the server
+				// This ensures agents from all instances are visible
+				if (agents.size > 0) {
+					const syncMsg = JSON.stringify({
+						type: "full_sync",
+						agents: [...agents.values()],
+					});
+					syncWs?.send(syncMsg);
+					log("info", `Sent ${agents.size} agents to server during sync`);
+				}
 			};
 
 			syncWs.onmessage = (ev) => {
@@ -359,6 +381,12 @@ export const PixelOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 
 	async function cleanup(signal: string) {
 		log("info", `Received ${signal}, shutting down...`);
+
+		// Clear any pending broadcast
+		if (broadcastTimeout) {
+			clearTimeout(broadcastTimeout);
+			broadcastTimeout = null;
+		}
 
 		// Close sync connection to central server
 		if (syncWs) {

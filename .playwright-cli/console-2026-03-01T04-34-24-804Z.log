@@ -1,0 +1,2 @@
+[      27ms] [ERROR] Failed to load resource: the server responded with a status of 400 (Bad Request) @ http://localhost:2727/:0
+[      66ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:2727/favicon.ico:0
