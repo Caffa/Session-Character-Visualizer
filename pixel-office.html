@@ -192,38 +192,6 @@ function connectWS() {
 
 connectWS();
 
-// ─── Test Mode ───────────────────────────────────────────────────────────────
-
-const TEST_MODE = true;  // Set to false to disable test agent
-
-// Create a test agent in editing state
-function createTestAgent() {
-  const testAgent = {
-    id: "test-agent-1",
-    parentID: null,
-    folder: "TestProject",
-    folderFull: "/tmp/test-project",
-    title: "Test Session",
-    status: "editing",
-    tool: "edit",
-    message: "Testing code panel animation...",
-    since: Date.now(),
-    color: 210,  // Blue hue
-    idleSince: null,
-    activityScale: 1.0,
-  };
-  agents[testAgent.id] = testAgent;
-  console.log("Test agent created:", testAgent);
-}
-
-if (TEST_MODE) {
-  // Wait a bit for page to load, then create test agent
-  setTimeout(() => {
-    console.log("TEST_MODE: Creating test agent");
-    createTestAgent();
-  }, 500);
-}
-
 // ─── p5.js Sketch ─────────────────────────────────────────────────────────────
 
 const FLOOR_COLOR   = [15, 15, 25];
