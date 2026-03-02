@@ -376,7 +376,7 @@ class Sprite {
 
     // Expression (for error state)
     this.expression = "normal";
-    
+
     // Code panel animation state
     this.editPanelPhase = "idle";  // idle, slideOut, expand, showCode, pixelate, closing
     this.editPanelStartTime = 0;
@@ -488,23 +488,23 @@ const CODE_SNIPPETS = [
 function drawCodePanel(p, sp, r, now, alpha) {
   // Track how long we've been showing this panel (for minimum duration)
   if (!sp.editPanelShowTime) sp.editPanelShowTime = now;
-  
+
   const panelShowDuration = now - sp.editPanelShowTime;
   const minShowTime = 1.0; // Minimum 1 second before allowing transition
-  
+
   const panelAnimDuration = 2.5; // Total cycle duration
-  const cycleTime = now % panelAnimDuration;  
+  const cycleTime = now % panelAnimDuration;
   // Check if we're in closing mode (status changed from editing)
   let panelAlpha = alpha;
   let drawPanel = true;
   let phase = 'showCode';
   let phaseProgress = 0.5;
-  
+
   if (sp.editPanelClosing) {
     // We're in closing animation - pixelate/fade out
     const closeElapsed = now - sp.editPanelCloseStart;
     const closeDuration = 0.5;
-    
+
     if (closeElapsed >= closeDuration) {
       // Closing complete
       sp.editPanelClosing = false;
@@ -552,13 +552,13 @@ function drawCodePanel(p, sp, r, now, alpha) {
       }
     }
   }
-  
+
   if (!drawPanel) return;
-  
+
   // Calculate panel position and size - FURTHER LEFT (more offset)
-  const baseX = sp.x - r * 1.8;  // Increased left offset (from 1.4 to 1.8)
-  const baseY = sp.y - r * 0.5;
-  
+  const baseX = sp.x - r * 4.2;  // Increased left offset (from 1.4 to 1.8)
+  const baseY = sp.y - r * 0.3;
+
   // Slide animation (ease out)
   const easeOut = 1 - Math.pow(1 - phaseProgress, 3);
   let slideOffset = 0;
@@ -569,14 +569,14 @@ function drawCodePanel(p, sp, r, now, alpha) {
   } else {
     slideOffset = easeOut * 10;
   }
-  
+
   const panelX = baseX + slideOffset;
   const panelY = baseY - 10;
-  
+
   // Panel size - BIGGER
   let panelW = 80;
   let panelH = 45;
-  
+
   if (phase === 'expand') {
     // Expand to full size
     const expandEase = easeOut;
@@ -591,57 +591,57 @@ function drawCodePanel(p, sp, r, now, alpha) {
     panelW = 120 * shrink;
     panelH = 70 * shrink;
   }
-  
+
   const panelLeft = panelX - panelW / 2;
   const panelTop = panelY - panelH / 2;
-  
+
   // Draw panel background with rounded corners
   p.push();
   p.noStroke();
   p.fill(...ONE_DARK.bg, Math.floor(panelAlpha * 0.95));
   p.rect(panelLeft, panelTop, panelW, panelH, 4);
-  
+
   // Panel border
   p.stroke(...ONE_DARK.string, Math.floor(panelAlpha * 0.6));
   p.strokeWeight(1);
   p.noFill();
   p.rect(panelLeft, panelTop, panelW, panelH, 4);
-  
+
   // Draw code lines if in showCode or expand phase
   if ((phase === 'showCode' || phase === 'expand' || phase === 'pixelate') && panelAlpha > 10) {
     // Pick random code snippet for this cycle (consistent during cycle)
     const snippetIndex = Math.floor((now / panelAnimDuration) * CODE_SNIPPETS.length) % CODE_SNIPPETS.length;
     const snippet = CODE_SNIPPETS[snippetIndex];
-    
+
     p.textSize(8);
     p.textAlign(p.LEFT, p.CENTER);
-    
+
     // Draw code line - SINGLE COLOR (no syntax highlighting)
     let textX = panelLeft + 10;
     const textY = panelTop + panelH / 2;
-    
+
     // Typewriter effect - reveal characters progressively
     const charProgress = Math.min(phaseProgress * 2, 1);
     const visibleChars = Math.floor(snippet.text.length * charProgress);
     const visibleText = snippet.text.substring(0, visibleChars);
-    
+
     // Single color for all code (using function color - nice blue)
     p.fill(...ONE_DARK.function, Math.floor(panelAlpha * 0.95));
     p.text(visibleText, textX, textY);
-    
+
     // Blinking cursor at end
     if (phase === 'showCode' && Math.sin(now * 6) > 0) {
       p.fill(...ONE_DARK.function, Math.floor(panelAlpha * 0.8));
       p.rect(textX + p.textWidth(visibleText) + 2, textY - 3, 2, 5, 0.5);
     }
   }
-  
+
   // Pixelation effect during fade - MORE VISIBLE
   if (phase === 'pixelate' && phaseProgress > 0.1) {
     const pixelEffectProgress = (phaseProgress - 0.1) / 0.9;
     const pixelSize = 6 + pixelEffectProgress * 8;
     const pixelAlphaVal = (1 - pixelEffectProgress * 0.8) * panelAlpha;
-    
+
     p.noStroke();
     // Break panel into random pixel squares - MORE EXPLOSIVE
     for (let px = 0; px < panelW; px += pixelSize) {
@@ -649,7 +649,7 @@ function drawCodePanel(p, sp, r, now, alpha) {
         // Random offset for "exploding" effect - MORE DRAMATIC
         const offsetX = (Math.random() - 0.5) * pixelEffectProgress * 50;
         const offsetY = (Math.random() - 0.5) * pixelEffectProgress * 50 - pixelEffectProgress * 30;
-        
+
         // Randomly skip some pixels for "breaking apart" effect
         if (Math.random() > 0.3) {
           p.fill(...ONE_DARK.bg, Math.floor(pixelAlphaVal * 0.6));
@@ -658,7 +658,7 @@ function drawCodePanel(p, sp, r, now, alpha) {
       }
     }
   }
-  
+
   // Small pencil icon at corner (slides with panel)
   if (phase === 'slideOut' || phase === 'expand') {
     const pencilAlpha = phase === 'slideOut' ? panelAlpha * 0.5 : panelAlpha * 0.3;
@@ -667,7 +667,7 @@ function drawCodePanel(p, sp, r, now, alpha) {
     p.fill(255, 255, 255, Math.floor(pencilAlpha));
     p.text("✏️", panelX, panelY - panelH / 2 - 8);
   }
-  
+
   p.pop();
 }
 
@@ -1101,7 +1101,7 @@ new p5((p) => {
         sprite.editPanelCloseStart = now;
       }
       sprite.previousStatus = agent.status;
-      drawFiddlingObject(p, sprite, agent.status, radius, now, alpha);
+      drawFiddlingObject(p, sprite, agent.status, sprite.currentRadius, now, alpha);
 
       // Speech bubble
       drawSpeechBubble(p, drawX, drawY + bobY, agent.message, agent.color, alpha);

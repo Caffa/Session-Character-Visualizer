@@ -608,6 +608,7 @@ export const PixelOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 							"editing",
 							"reading",
 							"running",
+							"waiting",
 						];
 						const isActive = activeStates.includes(existing.status);
 
