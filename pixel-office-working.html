@@ -192,38 +192,6 @@ function connectWS() {
 
 connectWS();
 
-// ─── Test Mode ───────────────────────────────────────────────────────────────
-
-const TEST_MODE = true;  // Set to false to disable test agent
-
-// Create a test agent in editing state
-function createTestAgent() {
-  const testAgent = {
-    id: "test-agent-1",
-    parentID: null,
-    folder: "TestProject",
-    folderFull: "/tmp/test-project",
-    title: "Test Session",
-    status: "editing",
-    tool: "edit",
-    message: "Testing code panel animation...",
-    since: Date.now(),
-    color: 210,  // Blue hue
-    idleSince: null,
-    activityScale: 1.0,
-  };
-  agents[testAgent.id] = testAgent;
-  console.log("Test agent created:", testAgent);
-}
-
-if (TEST_MODE) {
-  // Wait a bit for page to load, then create test agent
-  setTimeout(() => {
-    console.log("TEST_MODE: Creating test agent");
-    createTestAgent();
-  }, 500);
-}
-
 // ─── p5.js Sketch ─────────────────────────────────────────────────────────────
 
 const FLOOR_COLOR   = [15, 15, 25];
@@ -234,7 +202,7 @@ const GRID_SIZE     = 48;
 const STATUS_CFG = {
   idle:     { pulse: 0.4, radius: 22, opacity: 160, label: "💤", ring: false },
   thinking: { pulse: 1.8, radius: 26, opacity: 230, label: "🧠", ring: true  },
-  editing:  { pulse: 1.2, radius: 24, opacity: 255, label: "✏️", ring: true  }, // Reduced pulse & radius
+  editing:  { pulse: 2.5, radius: 28, opacity: 255, label: "✏️", ring: true  },
   reading:  { pulse: 1.2, radius: 25, opacity: 210, label: "📖", ring: true  },
   running:  { pulse: 3.0, radius: 27, opacity: 245, label: "💻", ring: true  },
   waiting:  { pulse: 0.8, radius: 24, opacity: 200, label: "⚠️", ring: true  },
@@ -376,15 +344,6 @@ class Sprite {
 
     // Expression (for error state)
     this.expression = "normal";
-    
-    // Code panel animation state
-    this.editPanelPhase = "idle";  // idle, slideOut, expand, showCode, pixelate, closing
-    this.editPanelStartTime = 0;
-    this.editPanelDuration = 0;
-    this.editPanelClosing = false;  // true when we need to finish closing animation
-    this.editPanelCloseStart = 0;
-    this.editPanelShowTime = null; // When panel started showing (for minimum duration)
-    this.previousStatus = "idle";   // track previous status for transition detection
   }
 }
 
@@ -459,218 +418,6 @@ function drawSpeechBubbleSubagent(p, x, y, text, hue, alpha) {
   p.pop();
 }
 
-// ── Code Panel Animation (One Dark Theme) ─────────────────────────────────
-
-// One Dark Theme colors
-const ONE_DARK = {
-  bg: [40, 44, 52],        // #282c34
-  comment: [92, 99, 112],  // #5c6370
-  string: [152, 195, 121], // #98c379 (green)
-  number: [209, 154, 102], // #d19a66 (orange)
-  keyword: [198, 120, 221],// #c678dd (purple)
-  function: [97, 175, 239],// #61afef (blue)
-  variable: [224, 108, 117],// #e06c75 (red/pink)
-  operator: [212, 218, 226], // #d8dee9
-};
-
-// Code snippets to display (file names being edited)
-const CODE_SNIPPETS = [
-  { text: 'src/index.ts' },
-  { text: 'utils/helpers.ts' },
-  { text: 'components/App.tsx' },
-  { text: 'api/routes.ts' },
-  { text: 'config.ts' },
-  { text: 'styles.css' },
-  { text: 'types.ts' },
-  { text: 'README.md' },
-];
-
-function drawCodePanel(p, sp, r, now, alpha) {
-  // Track how long we've been showing this panel (for minimum duration)
-  if (!sp.editPanelShowTime) sp.editPanelShowTime = now;
-  
-  const panelShowDuration = now - sp.editPanelShowTime;
-  const minShowTime = 1.0; // Minimum 1 second before allowing transition
-  
-  const panelAnimDuration = 2.5; // Total cycle duration
-  const cycleTime = now % panelAnimDuration;  
-  // Check if we're in closing mode (status changed from editing)
-  let panelAlpha = alpha;
-  let drawPanel = true;
-  let phase = 'showCode';
-  let phaseProgress = 0.5;
-  
-  if (sp.editPanelClosing) {
-    // We're in closing animation - pixelate/fade out
-    const closeElapsed = now - sp.editPanelCloseStart;
-    const closeDuration = 0.5;
-    
-    if (closeElapsed >= closeDuration) {
-      // Closing complete
-      sp.editPanelClosing = false;
-      sp.editPanelShowTime = null; // Reset show time
-      drawPanel = false;
-    } else {
-      // Continue closing animation
-      phase = 'pixelate';
-      phaseProgress = Math.min(closeElapsed / closeDuration, 1);
-      panelAlpha = alpha * (1 - phaseProgress);
-    }
-  } else {
-    // Normal cycle animation - determine phase from cycle time
-    // BUT stay in showCode phase while editing, with minimum duration
-    if (panelShowDuration < minShowTime) {
-      // Must stay in showCode phase (or get there quickly)
-      if (cycleTime < 0.4) {
-        phase = 'slideOut';
-        phaseProgress = Math.min(cycleTime / 0.4, 1);
-        panelAlpha = alpha * phaseProgress;
-      } else if (cycleTime < 0.6) {
-        phase = 'expand';
-        phaseProgress = Math.min((cycleTime - 0.4) / 0.2, 1);
-        panelAlpha = alpha;
-      } else {
-        phase = 'showCode';
-        phaseProgress = 1;
-        panelAlpha = alpha;
-      }
-    } else {
-      // After minimum time, can cycle normally
-      // BUT stay in showCode phase instead of pixelating (only pixelate on close)
-      if (cycleTime < 0.4) {
-        phase = 'slideOut';
-        phaseProgress = Math.min(cycleTime / 0.4, 1);
-        panelAlpha = alpha * phaseProgress;
-      } else if (cycleTime < 0.6) {
-        phase = 'expand';
-        phaseProgress = Math.min((cycleTime - 0.4) / 0.2, 1);
-        panelAlpha = alpha;
-      } else {
-        phase = 'showCode';
-        phaseProgress = 1;
-        panelAlpha = alpha;
-      }
-    }
-  }
-  
-  if (!drawPanel) return;
-  
-  // Calculate panel position and size - FURTHER LEFT (more offset)
-  const baseX = sp.x - r * 1.8;  // Increased left offset (from 1.4 to 1.8)
-  const baseY = sp.y - r * 0.5;
-  
-  // Slide animation (ease out)
-  const easeOut = 1 - Math.pow(1 - phaseProgress, 3);
-  let slideOffset = 0;
-  if (phase === 'slideOut') {
-    slideOffset = (1 - easeOut) * 40;
-  } else if (phase === 'expand' || phase === 'showCode') {
-    slideOffset = 0;
-  } else {
-    slideOffset = easeOut * 10;
-  }
-  
-  const panelX = baseX + slideOffset;
-  const panelY = baseY - 10;
-  
-  // Panel size - BIGGER
-  let panelW = 80;
-  let panelH = 45;
-  
-  if (phase === 'expand') {
-    // Expand to full size
-    const expandEase = easeOut;
-    panelW = 80 + (120 - 80) * expandEase;
-    panelH = 45 + (70 - 45) * expandEase;
-  } else if (phase === 'showCode') {
-    panelW = 120;
-    panelH = 70;
-  } else if (phase === 'pixelate') {
-    // Shrink slightly during pixelation
-    const shrink = 1 - phaseProgress * 0.3;
-    panelW = 120 * shrink;
-    panelH = 70 * shrink;
-  }
-  
-  const panelLeft = panelX - panelW / 2;
-  const panelTop = panelY - panelH / 2;
-  
-  // Draw panel background with rounded corners
-  p.push();
-  p.noStroke();
-  p.fill(...ONE_DARK.bg, Math.floor(panelAlpha * 0.95));
-  p.rect(panelLeft, panelTop, panelW, panelH, 4);
-  
-  // Panel border
-  p.stroke(...ONE_DARK.string, Math.floor(panelAlpha * 0.6));
-  p.strokeWeight(1);
-  p.noFill();
-  p.rect(panelLeft, panelTop, panelW, panelH, 4);
-  
-  // Draw code lines if in showCode or expand phase
-  if ((phase === 'showCode' || phase === 'expand' || phase === 'pixelate') && panelAlpha > 10) {
-    // Pick random code snippet for this cycle (consistent during cycle)
-    const snippetIndex = Math.floor((now / panelAnimDuration) * CODE_SNIPPETS.length) % CODE_SNIPPETS.length;
-    const snippet = CODE_SNIPPETS[snippetIndex];
-    
-    p.textSize(8);
-    p.textAlign(p.LEFT, p.CENTER);
-    
-    // Draw code line - SINGLE COLOR (no syntax highlighting)
-    let textX = panelLeft + 10;
-    const textY = panelTop + panelH / 2;
-    
-    // Typewriter effect - reveal characters progressively
-    const charProgress = Math.min(phaseProgress * 2, 1);
-    const visibleChars = Math.floor(snippet.text.length * charProgress);
-    const visibleText = snippet.text.substring(0, visibleChars);
-    
-    // Single color for all code (using function color - nice blue)
-    p.fill(...ONE_DARK.function, Math.floor(panelAlpha * 0.95));
-    p.text(visibleText, textX, textY);
-    
-    // Blinking cursor at end
-    if (phase === 'showCode' && Math.sin(now * 6) > 0) {
-      p.fill(...ONE_DARK.function, Math.floor(panelAlpha * 0.8));
-      p.rect(textX + p.textWidth(visibleText) + 2, textY - 3, 2, 5, 0.5);
-    }
-  }
-  
-  // Pixelation effect during fade - MORE VISIBLE
-  if (phase === 'pixelate' && phaseProgress > 0.1) {
-    const pixelEffectProgress = (phaseProgress - 0.1) / 0.9;
-    const pixelSize = 6 + pixelEffectProgress * 8;
-    const pixelAlphaVal = (1 - pixelEffectProgress * 0.8) * panelAlpha;
-    
-    p.noStroke();
-    // Break panel into random pixel squares - MORE EXPLOSIVE
-    for (let px = 0; px < panelW; px += pixelSize) {
-      for (let py = 0; py < panelH; py += pixelSize) {
-        // Random offset for "exploding" effect - MORE DRAMATIC
-        const offsetX = (Math.random() - 0.5) * pixelEffectProgress * 50;
-        const offsetY = (Math.random() - 0.5) * pixelEffectProgress * 50 - pixelEffectProgress * 30;
-        
-        // Randomly skip some pixels for "breaking apart" effect
-        if (Math.random() > 0.3) {
-          p.fill(...ONE_DARK.bg, Math.floor(pixelAlphaVal * 0.6));
-          p.rect(panelLeft + px + offsetX, panelTop + py + offsetY, pixelSize - 2, pixelSize - 2, 2);
-        }
-      }
-    }
-  }
-  
-  // Small pencil icon at corner (slides with panel)
-  if (phase === 'slideOut' || phase === 'expand') {
-    const pencilAlpha = phase === 'slideOut' ? panelAlpha * 0.5 : panelAlpha * 0.3;
-    p.textSize(10);
-    p.textAlign(p.CENTER, p.CENTER);
-    p.fill(255, 255, 255, Math.floor(pencilAlpha));
-    p.text("✏️", panelX, panelY - panelH / 2 - 8);
-  }
-  
-  p.pop();
-}
-
 // ── Floor grid ─────────────────────────────────────────────────────────────
 
 function drawFloor(p) {
@@ -698,8 +445,13 @@ function drawFiddlingObject(p, sp, status, r, now, alpha) {
 
   switch (status) {
     case "editing": {
-      // Code panel animation
-      drawCodePanel(p, sp, r, now, alpha);
+      // Pencil that bounces
+      p.push();
+      const pencilAngle = Math.sin(now * 4) * 0.3;
+      p.translate(objX + 5, objY - 5);
+      p.rotate(pencilAngle);
+      p.text("✏️", 0, 0);
+      p.pop();
       break;
     }
     case "reading": {
@@ -785,7 +537,7 @@ function updateStatusTransition(sp, newStatus, deltaTime = 1/60) {
     sp.targetAlpha = cfg.opacity;
     // Bob speed based on status
     if (newStatus === "idle") sp.targetBobSpeed = 0.8;
-    else if (newStatus === "editing") sp.targetBobSpeed = 1.5; // Reduced from 3 to 1.5 - calmer breathing
+    else if (newStatus === "editing") sp.targetBobSpeed = 3;
     else if (newStatus === "running") sp.targetBobSpeed = 5;
     else sp.targetBobSpeed = 2;
   }
@@ -991,7 +743,7 @@ new p5((p) => {
         // Different ring styles based on status (smoothed)
         let ringPulse = now * 2.5;
         if (agent.status === "thinking") ringPulse = now * 1;  // Slow, expanding
-        if (agent.status === "editing") ringPulse = now * 2;   // Calm (reduced from 4 to 2)
+        if (agent.status === "editing") ringPulse = now * 4;   // Energetic
         if (agent.status === "waiting") ringPulse = now * 2;  // Moderate
 
         const glowAlpha = (0.3 + 0.2 * Math.sin(ringPulse + sprite.phase)) * alpha;
@@ -1005,7 +757,7 @@ new p5((p) => {
       // Bob / walk animation - use interpolated bob speed for smooth transitions
       // Map status to base amplitude for consistent motion
       let bobAmplitude = 2;
-      if (agent.status === "editing") bobAmplitude = 1; // Reduced from 3 to 1 - less bouncing
+      if (agent.status === "editing") bobAmplitude = 3;
       else if (agent.status === "running") bobAmplitude = 4;
 
       // Use interpolated bob speed for smooth transitions between states
@@ -1095,12 +847,6 @@ new p5((p) => {
       }
 
       // Fiddling objects based on status
-      // Check for status transition from editing → non-editing to trigger closing animation
-      if (sprite.previousStatus === "editing" && agent.status !== "editing" && !sprite.editPanelClosing) {
-        sprite.editPanelClosing = true;
-        sprite.editPanelCloseStart = now;
-      }
-      sprite.previousStatus = agent.status;
       drawFiddlingObject(p, sprite, agent.status, radius, now, alpha);
 
       // Speech bubble
