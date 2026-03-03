@@ -47,15 +47,17 @@ open ~/.config/opencode/plugins/pixel-office.html
 
 ## Agent States
 
-| State    | Color  | Description         |
-| -------- | ------ | ------------------- |
-| Idle     | Grey   | Waiting for input   |
-| Thinking | Purple | Processing response |
-| Editing  | Green  | Writing files       |
-| Reading  | Blue   | Reading code        |
-| Running  | Orange | Executing commands  |
-| Waiting  | Yellow | Requires permission |
-| Error    | Red    | Error occurred      |
+| State    | Visual Features                    | Description                                                        |
+| -------- | ---------------------------------- | ------------------------------------------------------------------ |
+| Idle     | 💤, slow pulse, no ring            | Finished work, waiting for next task. Subagents removed after 10s. |
+| Thinking | 🧠, expanding ring, sparkles       | Processing/generating. Eyes move rhythmically tracking thoughts.   |
+| Editing  | ✏️, code panel with typewriter     | Writing/editing files. Shows animated panel with file names.       |
+| Reading  | 📖 with glasses, book opens/closes | Reading files, searching. Glasses wobble while scanning.           |
+| Running  | 💻, fast pulse, motion streaks     | Executing bash commands, terminal operations.                      |
+| Waiting  | ⚠️, nervous shake, bouncing ❓     | Blocked needing user permission. Gentle oscillation.               |
+| Error    | ❌, X_X eyes, red pulse, ⚡        | Something went wrong - needs attention.                            |
+
+**Agent Colors**: Each agent gets a unique hue (0-360°) derived from its session ID. Colors persist per session - same agent always has the same color. Subagents use their parent's hue with a +30° offset for visual distinction.
 
 ---
 
