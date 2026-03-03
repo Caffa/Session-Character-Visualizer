@@ -10,7 +10,7 @@ let httpServer: ReturnType<typeof Bun.serve> | null = null;
 
 export function startHTTPServer(port: number = 3000): Promise<void> {
 	return new Promise((resolve) => {
-		const htmlPath = join(process.cwd(), "pixel-office.html");
+		const htmlPath = join(process.cwd(), "blob-office.html");
 
 		httpServer = Bun.serve({
 			port,

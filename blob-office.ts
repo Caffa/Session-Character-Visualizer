@@ -1,12 +1,12 @@
 /**
- * pixel-office.ts
+ * blob-office.ts
  * Global OpenCode plugin — drop into ~/.config/opencode/plugins/
  *
  * Starts a WebSocket server on ws://localhost:2727 and broadcasts
- * live session state to the pixel-office viewer (pixel-office.html).
+ * live session state to the blob-office viewer (blob-office.html).
  *
  * Install:
- *   cp pixel-office.ts ~/.config/opencode/plugins/
+ *   cp blob-office.ts ~/.config/opencode/plugins/
  *   cp package.json   ~/.config/opencode/plugins/
  *   # OpenCode runs `bun install` automatically at next startup
  */
@@ -126,7 +126,7 @@ export function getActivityScale(agentId: string): number {
 
 // ─── Plugin ───────────────────────────────────────────────────────────────────
 
-export const PixelOfficePlugin: Plugin = async ({ directory, client, $ }) => {
+export const BlobOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 	// Clear any stale activity data from previous sessions
 	agentFileActivity.clear();
 
@@ -142,7 +142,7 @@ export const PixelOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 		try {
 			await client?.app?.log?.({
 				body: {
-					service: "pixel-office",
+					service: "blob-office",
 					level,
 					message: msg,
 				},
@@ -220,8 +220,8 @@ export const PixelOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 		browserOpened = true;
 		// Find the viewer — look next to the plugin file, then home
 		const candidates = [
-			`${process.env.HOME}/.config/opencode/plugins/pixel-office.html`,
-			`${process.env.HOME}/pixel-office/index.html`,
+			`${process.env.HOME}/.config/opencode/plugins/blob-office.html`,
+			`${process.env.HOME}/blob-office/index.html`,
 		];
 		const viewer = candidates[0]; // default install location
 
@@ -316,7 +316,7 @@ export const PixelOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 			websocket: {
 				open(ws) {
 					log("info", "Client connected");
-					notify("Pixel Office", "Viewer connected");
+					notify("Blob Office", "Viewer connected");
 					clients.add(ws as unknown as globalThis.WebSocket);
 					// Send current state immediately on connect
 					ws.send(
@@ -371,7 +371,7 @@ export const PixelOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 			syncWs = new WebSocket(wsUrl);
 
 			syncWs.onopen = () => {
-				log("info", "Connected to existing Pixel Office server as client");
+				log("info", "Connected to existing Blob Office server as client");
 				// Send full sync of our local agents to the server
 				// This ensures agents from all instances are visible
 				if (agents.size > 0) {

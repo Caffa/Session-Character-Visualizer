@@ -39,8 +39,8 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/Caffa/Session-Character-
 # Restart OpenCode
 opencode --restart
 
-# Open the viewer
-open ~/.config/opencode/plugins/pixel-office.html
+# Open viewer
+open ~/.config/opencode/plugins/blob-office.html
 ```
 
 ---
@@ -64,11 +64,11 @@ open ~/.config/opencode/plugins/pixel-office.html
 ## Architecture
 
 ```
-pixel-office.ts (OpenCode plugin)
+blob-office.ts (OpenCode plugin)
   ├─ Session events: created, deleted, status changes
   ├─ Tool executions: read, edit, bash, webfetch
   └─ WebSocket server: ws://localhost:2727
-       └─ pixel-office.html (p5.js renderer)
+       └─ blob-office.html (p5.js renderer)
             ├─ Radial agent positioning
             └─ Status-based animations
 ```
@@ -86,8 +86,8 @@ pixel-office.ts (OpenCode plugin)
 
 Change WebSocket port in:
 
-1. `pixel-office.ts`: `PORT = 2727`
-2. `pixel-office.html`: `WS_URL`
+1. `blob-office.ts`: `PORT = 2727`
+2. `blob-office.html`: `WS_URL`
 
 ---
 
@@ -112,13 +112,13 @@ cd media-previews
 
 ## Troubleshooting
 
-**Viewer doesn't open**: Open `~/.config/opencode/plugins/pixel-office.html` manually
+**Viewer doesn't open**: Open `~/.config/opencode/plugins/blob-office.html` manually
 
-**Port 2727 in use**: Change port in `pixel-office.ts` and `pixel-office.html`
+**Port 2727 in use**: Change port in `blob-office.ts` and `blob-office.html`
 
 **No agents appearing**:
 
-1. Check OpenCode logs for `[pixel-office]` prefix
+1. Check OpenCode logs for `[blob-office]` prefix
 2. Run `bun install` in plugin folder
 3. Open browser console on viewer page
 

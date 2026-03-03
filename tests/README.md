@@ -1,8 +1,8 @@
-# Pixel Office Plugin Test Suite
+# Blob Office Plugin Test Suite
 
 ![Main Show](../media-previews/main_show.gif)
 
-Automated test suite for the Pixel Office OpenCode plugin.
+Automated test suite for the Blob Office OpenCode plugin.
 
 ## Overview
 

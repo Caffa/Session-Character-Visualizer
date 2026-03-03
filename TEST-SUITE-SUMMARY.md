@@ -2,7 +2,7 @@
 
 ## Summary
 
-Successfully created a comprehensive automated test suite for the Pixel Office OpenCode plugin with **57 passing tests** covering unit, integration, and E2E scenarios.
+Successfully created a comprehensive automated test suite for the Blob Office OpenCode plugin with **57 passing tests** covering unit, integration, and E2E scenarios.
 
 ## Test Suite Overview
 

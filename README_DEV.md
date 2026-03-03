@@ -1,20 +1,20 @@
-# Pixel Office
+# Blob Office
 
 OpenCode plugin for visualizing coding sessions in a virtual office workspace.
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 
-Pixel Office is an OpenCode plugin that creates a blob character visualization of your coding sessions. Each session appears as a colored agent character with speech bubbles showing current status and activity.
+Blob Office is an OpenCode plugin that creates a blob character visualization of your coding sessions. Each session appears as a colored agent character with speech bubbles showing current status and activity.
 
 ---
 
 ## Installation
 
-Install via the provided script:
+Install via provided script:
 
 ```bash
 git clone <this-repo>
-cd pixel-office
+cd blob-office
 bash install.sh
 ```
 
@@ -34,7 +34,7 @@ $ bash install.sh
 # Restart OpenCode
 $ opencode --restart
 # Open the viewer in browser
-$ open ~/.config/opencode/plugins/pixel-office/index.html
+$ open ~/.config/opencode/plugins/blob-office.html
 ```
 
 ### Agent States
@@ -56,18 +56,18 @@ $ open ~/.config/opencode/plugins/pixel-office/index.html
 The plugin hooks into OpenCode's event system and broadcasts updates via WebSocket:
 
 ```
-pixel-office.ts (OpenCode plugin)
+blob-office.ts (OpenCode plugin)
   ├─ Session events: created, deleted, status changes
   ├─ Tool executions: read, edit, bash, webfetch
-  └─ WebSocket server: ws://localhost:2728
-       └─ pixel-office/index.html (p5.js renderer)
+  └─ WebSocket server: ws://localhost:2727
+       └─ blob-office.html (p5.js renderer)
             ├─ Agent rendering with status-based animations
             └─ Desk assignments for multi-session layouts
 ```
 
 ### Technical Constraints
 
-- Single WebSocket connection on port 2728 (configurable in source)
+- Single WebSocket connection on port 2727 (configurable in source)
 - No file watching or polling required
 - Uses event-driven updates from OpenCode hooks
 - p5.js for canvas rendering with device pixel density support
@@ -77,15 +77,15 @@ pixel-office.ts (OpenCode plugin)
 
 ## Other Similar Projects
 
-| Feature       | Pixel Office | Pixel Agents (VS Code) |
-| ------------- | ------------ | ---------------------- |
-| Platform      | OpenCode     | VS Code                |
-| Rendering     | p5.js        | Custom engine          |
-| WebSocket     | Native       | Required setup         |
-| Multi-session | Supported    | Supported              |
-| Subagents     | Supported    | Not available          |
+| Feature       | Blob Office | Pixel Agents (VS Code) |
+| ------------- | ----------- | ---------------------- |
+| Platform      | OpenCode    | VS Code                |
+| Rendering     | p5.js       | Custom engine          |
+| WebSocket     | Native      | Required setup         |
+| Multi-session | Supported   | Supported              |
+| Subagents     | Supported   | Not available          |
 
-Pixel Office is designed specifically for OpenCode integration. For VS Code users, see [Pixel Agents](https://github.com/pablodelucca/pixel-agents) by pablodelucca.
+Blob Office is designed specifically for OpenCode integration. For VS Code users, see [Pixel Agents](https://github.com/pablodelucca/pixel-agents) by pablodelucca.
 
 ---
 
@@ -93,12 +93,12 @@ Pixel Office is designed specifically for OpenCode integration. For VS Code user
 
 Change the WebSocket port by modifying these files:
 
-1. `pixel-office.ts`: `PORT = 2728`
-2. `pixel-office/js/websocket.js`: `const WS_URL = "ws://localhost:2728/ws"`
+1. `blob-office.ts`: `PORT = 2727`
+2. `blob-office.html`: `WS_URL`
 
 ### Custom Rendering
 
-The rendering logic lives in `pixel-office/js/render/`. Modify agent appearance by editing:
+The rendering logic lives in `blob-office.html` (embedded JavaScript). Modify agent appearance by editing:
 
 - `agent.js`: Body drawing, eyes, animations
 - `desk.js`: Desk styling
@@ -141,7 +141,7 @@ See `media-previews/STATE-CAPTURE-GUIDE.md` for detailed instructions on trigger
 
 ## Contributing
 
-Contributions welcome. Read the project code structure in `pixel-office/js/` for extension points.
+Contributions welcome. Read the project code structure in `blob-office.html` for extension points.
 
 ---
 
@@ -155,13 +155,13 @@ If this plugin helps your workflow, consider supporting development:
 
 ## Troubleshooting
 
-**Viewer does not open**: Open `~/.config/opencode/plugins/pixel-office/index.html` manually in browser
+**Viewer does not open**: Open `~/.config/opencode/plugins/blob-office.html` manually in browser
 
-**Port 2728 in use**: Change port in `pixel-office.ts` and `pixel-office/js/websocket.js`
+**Port 2727 in use**: Change port in `blob-office.ts` and `blob-office.html`
 
 **No agents appearing**:
 
-1. Check OpenCode logs for `[pixel-office]` prefix
+1. Check OpenCode logs for `[blob-office]` prefix
 2. Run `bun install` in the plugin folder
 3. Open browser console on the viewer page for errors
 
@@ -175,4 +175,4 @@ MIT License - see LICENSE file for details
 
 ## About OpenCode
 
-Pixel Office is a community plugin for [OpenCode](https://github.com/anomalyco/opencode), not affiliated with the OpenCode team.
+Blob Office is a community plugin for [OpenCode](https://github.com/anomalyco/opencode), not affiliated with the OpenCode team.

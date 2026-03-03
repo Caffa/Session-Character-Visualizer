@@ -4,18 +4,18 @@
  */
 
 import { beforeEach, describe, expect, it } from "bun:test";
-import { PixelOfficePlugin } from "../../pixel-office.ts";
+import { BlobOfficePlugin } from "../../blob-office.ts";
 import {
 	createMockPlugin,
 	delay,
 	generateSessionId,
 } from "../mocks/mock-opencode.ts";
 
-describe("PixelOfficePlugin - Agent Lifecycle", () => {
+describe("BlobOfficePlugin - Agent Lifecycle", () => {
 	let mockPlugin: Awaited<ReturnType<typeof createMockPlugin>>;
 
 	beforeEach(async () => {
-		mockPlugin = await createMockPlugin(PixelOfficePlugin, "/test/project");
+		mockPlugin = await createMockPlugin(BlobOfficePlugin, "/test/project");
 	});
 
 	describe("Session Creation", () => {
@@ -131,11 +131,11 @@ describe("PixelOfficePlugin - Agent Lifecycle", () => {
 	});
 });
 
-describe("PixelOfficePlugin - Tool Execution", () => {
+describe("BlobOfficePlugin - Tool Execution", () => {
 	let mockPlugin: Awaited<ReturnType<typeof createMockPlugin>>;
 
 	beforeEach(async () => {
-		mockPlugin = await createMockPlugin(PixelOfficePlugin, "/test/project");
+		mockPlugin = await createMockPlugin(BlobOfficePlugin, "/test/project");
 	});
 
 	it("should handle tool.execute.before hook", async () => {
@@ -171,11 +171,11 @@ describe("PixelOfficePlugin - Tool Execution", () => {
 	});
 });
 
-describe("PixelOfficePlugin - Permissions", () => {
+describe("BlobOfficePlugin - Permissions", () => {
 	let mockPlugin: Awaited<ReturnType<typeof createMockPlugin>>;
 
 	beforeEach(async () => {
-		mockPlugin = await createMockPlugin(PixelOfficePlugin, "/test/project");
+		mockPlugin = await createMockPlugin(BlobOfficePlugin, "/test/project");
 	});
 
 	it("should handle permission.updated event", async () => {
@@ -193,11 +193,11 @@ describe("PixelOfficePlugin - Permissions", () => {
 	});
 });
 
-describe("PixelOfficePlugin - Messages", () => {
+describe("BlobOfficePlugin - Messages", () => {
 	let mockPlugin: Awaited<ReturnType<typeof createMockPlugin>>;
 
 	beforeEach(async () => {
-		mockPlugin = await createMockPlugin(PixelOfficePlugin, "/test/project");
+		mockPlugin = await createMockPlugin(BlobOfficePlugin, "/test/project");
 	});
 
 	it("should handle assistant message updates", async () => {

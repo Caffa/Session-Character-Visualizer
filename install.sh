@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# install.sh — Pixel Office setup script
+# install.sh — Blob Office setup script
 # Run once: bash install.sh
 # Re-run to update to latest version
 
@@ -7,8 +7,8 @@ set -e
 PLUGIN_DIR="$HOME/.config/opencode/plugins"
 
 # Check if already installed (update mode)
-if [ -f "$PLUGIN_DIR/pixel-office.ts" ]; then
-	echo "🔄 Updating existing Pixel Office installation…"
+if [ -f "$PLUGIN_DIR/blob-office.ts" ]; then
+	echo "🔄 Updating existing Blob Office installation…"
 	MODE="update"
 else
 	echo "📦 Creating plugin directory…"
@@ -18,7 +18,7 @@ fi
 mkdir -p "$PLUGIN_DIR"
 
 echo "🔌 Copying plugin files…"
-cp pixel-office.ts "$PLUGIN_DIR/pixel-office.ts"
+cp blob-office.ts "$PLUGIN_DIR/blob-office.ts"
 
 # Merge package.json deps if one already exists, else just copy
 if [ -f "$PLUGIN_DIR/package.json" ]; then
@@ -42,7 +42,7 @@ else
 fi
 
 echo "🖥️  Copying viewer…"
-cp pixel-office.html "$PLUGIN_DIR/pixel-office.html"
+cp blob-office.html "$PLUGIN_DIR/blob-office.html"
 
 echo ""
 if [ "$MODE" = "update" ]; then
@@ -54,5 +54,5 @@ else
 	echo "   3. The viewer opens automatically in your browser"
 fi
 echo ""
-echo "   Viewer is at: $PLUGIN_DIR/pixel-office.html"
+echo "   Viewer is at: $PLUGIN_DIR/blob-office.html"
 echo "   You can also open it manually anytime."

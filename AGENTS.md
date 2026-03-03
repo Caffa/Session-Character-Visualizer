@@ -1,13 +1,13 @@
-# AGENTS.md — Pixel Office Plugin
+# AGENTS.md — Blob Office Plugin
 
 Guidelines for AI agents working on this OpenCode visualization plugin.
 
 ## Project Overview
 
-Pixel Office is an OpenCode plugin that visualizes AI coding sessions as animated characters in a virtual office. It consists of:
+Blob Office is an OpenCode plugin that visualizes AI coding sessions as animated characters in a virtual office. It consists of:
 
-- `pixel-office.ts` — Main plugin (TypeScript, runs in Bun)
-- `pixel-office.html` — Visual viewer (HTML + p5.js)
+- `blob-office.ts` — Main plugin (TypeScript, runs in Bun)
+- `blob-office.html` — Visual viewer (HTML + p5.js)
 - `package.json` — Minimal ES module declaration
 - `install.sh` — Setup script for `~/.config/opencode/plugins/`
 
@@ -26,7 +26,7 @@ bash install.sh
 
 ## Code Style Guidelines
 
-### TypeScript (pixel-office.ts)
+### TypeScript (blob-office.ts)
 
 - **Runtime**: Bun (not Node.js) — use Bun APIs like `Bun.serve()`
 - **Types**: Explicit types for all function params and return values
@@ -96,7 +96,7 @@ try {
 { type: "snapshot", agents: AgentState[] }
 ```
 
-## HTML/Viewer (pixel-office.html)
+## HTML/Viewer (blob-office.html)
 
 - Uses p5.js from CDN for rendering
 - WebSocket client reconnects automatically
@@ -116,14 +116,14 @@ try {
 - No formal test suite — test manually by:
   1. Running `bash install.sh`
   2. Restarting OpenCode
-  3. Opening browser to `pixel-office.html`
+  3. Opening browser to `blob-office.html`
   4. Starting OpenCode sessions and watching for agents
 
 ## File Structure
 
 ```
-├── pixel-office.ts      # Main plugin — TypeScript, Bun APIs
-├── pixel-office.html    # Viewer — HTML, p5.js, vanilla JS
+├── blob-office.ts      # Main plugin — TypeScript, Bun APIs
+├── blob-office.html    # Viewer — HTML, p5.js, vanilla JS
 ├── package.json         # ES module declaration
 ├── install.sh           # Setup script
 └── media-previews/      # Demo GIFs for README
@@ -133,7 +133,7 @@ try {
 
 ### Add support for a new OpenCode tool
 
-1. In `pixel-office.ts`, add to `TOOL_STATUS` map:
+1. In `blob-office.ts`, add to `TOOL_STATUS` map:
 
    ```typescript
    newtool: "reading",  // or "editing", "running", etc.
@@ -149,8 +149,8 @@ try {
 
 ### Change the WebSocket port
 
-1. Edit `PORT` constant in `pixel-office.ts`
-2. Edit `WS_URL` in `pixel-office.html`
+1. Edit `PORT` constant in `blob-office.ts`
+2. Edit `WS_URL` in `blob-office.html`
 3. Re-run `bash install.sh`
 
 ## Dependencies

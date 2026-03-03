@@ -1,13 +1,13 @@
 /**
  * tests/e2e/viewer.spec.ts
- * E2E browser tests for the Pixel Office viewer
+ * E2E browser tests for the Blob Office viewer
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { $ } from "bun";
 
 const VIEWER_FILE =
-	"/Users/caffae/Local-Projects-2026/Wild-Projects/Pixel-Agent-Visualizer/V2-My-Opencode-Pixel-Agent/pixel-office.html";
+	"/Users/caffae/Local-Projects-2026/Wild-Projects/Pixel-Agent-Visualizer/V2-My-Opencode-Pixel-Agent/blob-office.html";
 
 const TEST_HTTP_PORT = 2731;
 let testServer: { stop: () => void } | null = null;
@@ -29,7 +29,7 @@ async function startTestServer(): Promise<{ stop: () => void }> {
 
 const VIEWER_URL = `http://localhost:${TEST_HTTP_PORT}`;
 
-describe("Pixel Office Viewer", () => {
+describe("Blob Office Viewer", () => {
 	beforeAll(async () => {
 		testServer = await startTestServer();
 	});
