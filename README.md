@@ -6,7 +6,9 @@ OpenCode plugin for visualizing AI coding sessions in a virtual office workspace
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 
-Pixel Office creates a blob character visualization of your coding sessions. Each session appears as a colored agent with speech bubbles showing current status and activity.
+Pixel Office creates a blob character visualization of your coding sessions. Each session appears as a colored agent with speech bubbles showing current status and activity. Subagents show as smaller blobs orbitting their parents.
+
+![subagents](media-previews/subagent.gif)
 
 ---
 
