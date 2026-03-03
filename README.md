@@ -1,5 +1,7 @@
 # 🏢 Pixel Office
 
+![Demo](media-previews/main_show.gif)
+
 OpenCode plugin for visualizing AI coding sessions in a virtual office workspace.
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
