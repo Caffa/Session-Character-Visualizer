@@ -331,7 +331,11 @@ export const BlobOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 					// Handle incoming sync messages from other plugin instances
 					try {
 						const msg = JSON.parse(message.toString());
-						if (msg.type === "agent_update" || msg.type === "full_sync") {
+						if (
+							msg.type === "agent_update" ||
+							msg.type === "full_sync" ||
+							msg.type === "snapshot"
+						) {
 							// Merge incoming agents from client instances - ADD only, don't remove
 							for (const agent of msg.agents) {
 								if (!agents.has(agent.id)) {
@@ -345,6 +349,10 @@ export const BlobOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 									}
 								}
 							}
+							log(
+								"info",
+								`Merged ${msg.agents.length} agents from client, total: ${agents.size}`,
+							);
 							// Re-broadcast to all connected viewers
 							broadcast();
 						}
@@ -381,6 +389,8 @@ export const BlobOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 					});
 					syncWs?.send(syncMsg);
 					log("info", `Sent ${agents.size} agents to server during sync`);
+				} else {
+					log("info", "No local agents to sync to server");
 				}
 			};
 
@@ -535,10 +545,13 @@ export const BlobOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 					const title = sessionInfo.title;
 					const isSubAgent = !!parentID;
 
+					// Check if agent already exists before adding
+					const agentAlreadyExists = agents.has(id);
+
 					// Log for debugging - shows session info and agent count
 					log(
 						"info",
-						`Session created: ${id.substring(0, 8)}..., parentID: ${parentID ? parentID.substring(0, 8) + "..." : "none"}, agents count: ${agents.size}`,
+						`Session created: ${id.substring(0, 8)}..., parentID: ${parentID ? parentID.substring(0, 8) + "..." : "none"}, already exists: ${agentAlreadyExists}, agents count: ${agents.size}`,
 					);
 
 					agents.set(id, {
@@ -571,22 +584,24 @@ export const BlobOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 					const id = sessionInfo.id;
 					const title = sessionInfo.title;
 
+					const agentExists = agents.has(id);
 					log(
 						"info",
-						`Session updated: ${id.substring(0, 8)}..., agents count: ${agents.size}`,
+						`Session updated: ${id.substring(0, 8)}..., agent exists: ${agentExists}, agents count: ${agents.size}`,
 					);
 
 					// If agent doesn't exist yet, create it (edge case - session resumed but not created in this instance)
 					if (!agents.has(id)) {
+						const parentID = (eventProps.parentID as string) ?? null;
 						agents.set(id, {
 							id,
-							parentID: null,
+							parentID: parentID,
 							folder: folderName(directory),
 							folderFull: directory,
 							title: title ?? null,
 							status: "idle",
 							tool: null,
-							message: null,
+							message: "↩️ resumed",
 							since: Date.now(),
 							color: hueFromId(id),
 							idleSince: null,
@@ -594,7 +609,7 @@ export const BlobOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 						});
 						log(
 							"info",
-							`Agent added via session.updated, total agents: ${agents.size}`,
+							`Agent added via session.updated (${id.substring(0, 8)}...), parentID: ${parentID ? parentID.substring(0, 8) + "..." : "none"}, total agents: ${agents.size}`,
 						);
 					} else {
 						// Agent already exists - check if it was just created (session.created already ran)
