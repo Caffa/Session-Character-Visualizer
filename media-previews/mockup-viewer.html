@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>State Mockup Generator</title>
+  <style>
+    body { margin: 0; background: #0d0d14; }
+    #controls {
+      position: fixed;
+      top: 10px; right: 10px;
+      background: rgba(0,0,0,0.8);
+      padding: 15px;
+      border-radius: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    button {
+      padding: 8px 12px;
+      cursor: pointer;
+      background: #2a2a4a;
+      color: #aaa;
+      border: 1px solid #3a3a5a;
+      border-radius: 4px;
+      font-size: 12px;
+    }
+    button:hover { background: #3a3a5a; color: #fff; }
+    button.active { background: #4a4a7a; color: #fff; border-color: #5a5a8a; }
+    canvas { display: block; }
+  </style>
+</head>
+<body>
+
+<div id="controls">
+  <div style="color:#888; font-size:10px; margin-bottom:5px;">Select state to display:</div>
+  <button onclick="setState('idle')" id="btn-idle">Idle 💤</button>
+  <button onclick="setState('thinking')" id="btn-thinking">Thinking 🧠</button>
+  <button onclick="setState('editing')" id="btn-editing">Editing ✏️</button>
+  <button onclick="setState('reading')" id="btn-reading">Reading 📖</button>
+  <button onclick="setState('running')" id="btn-running">Running 💻</button>
+  <button onclick="setState('waiting')" id="btn-waiting">Waiting ⚠️</button>
+  <button onclick="setState('error')" id="btn-error">Error ❌</button>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.4/p5.min.js"></script>
+<script>
+// Load the full p5 sketch from pixel-office.html but with modified WS URL
+let agents = {};
+let connected = false;
+
+function connectWS() {
+  ws = new WebSocket('ws://localhost:2728/ws');
+
+  ws.onopen = () => {
+    connected = true;
+    console.log('Connected to mockup server');
+  };
+
+  ws.onclose = () => {
+    connected = false;
+    setTimeout(connectWS, 2000);
+  };
+
+  ws.onmessage = (ev) => {
+    try {
+      const msg = JSON.parse(ev.data);
+      if (msg.type === "snapshot") {
+        const next = {};
+        for (const a of msg.agents) {
+          next[a.id] = { ...a };
+        }
+        // Preserve sprite state
+        for (const id in agents) {
+          if (next[id] && agents[id]._sprite) {
+            next[id]._sprite = agents[id]._sprite;
+          }
+        }
+        agents = next;
+      }
+    } catch { /* ignore */ }
+  };
+}
+
+function setState(status) {
+  if (!connected) return;
+  ws.send(JSON.stringify({ type: "set_status", status }));
+  // Update button styles
+  document.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+  document.getElementById(`btn-${status}`).classList.add('active');
+}
+
+connectWS();
+
+// Copy the full p5 sketch from pixel-office.html with minor modifications
+// For brevity, I'll just include the key parts
+</script>
+
+<!-- Inline the full pixel-office.html sketch with WS_URL changed to 2728 -->
+<script>
+const FLOOR_COLOR   = [15, 15, 25];
+const GRID_COLOR    = [22, 22, 38];
+const GRID_SIZE     = 48;
+
+const STATUS_CFG = {
+  idle:     { pulse: 0.4, radius: 22, opacity: 160, label: "💤", ring: false },
+  thinking: { pulse: 1.8, radius: 26, opacity: 230, label: "🧠", ring: true  },
+  editing:  { pulse: 1.2, radius: 24, opacity: 255, label: "✏️", ring: true  },
+  reading:  { pulse: 1.2, radius: 25, opacity: 210, label: "📖", ring: true  },
+  running:  { pulse: 3.0, radius: 27, opacity: 245, label: "💻", ring: true  },
+  waiting:  { pulse: 0.8, radius: 24, opacity: 200, label: "⚠️", ring: true  },
+  error:    { pulse: 1.5, radius: 24, opacity: 255, label: "❌", ring: true  },
+};
+
+const agentPositions = {};
+let positionAssignments = [];
+
+function calculateRadialPos(agentIndex, totalAgents, W, H) {
+  const centerX = W / 2;
+  const centerY = (H - 30) / 2;
+  const minRadius = 80;
+  const radiusPerAgent = 45;
+  const maxRadius = Math.min(W, H - 30) / 2 - 60;
+  const radius = Math.min(minRadius + (totalAgents * radiusPerAgent), maxRadius);
+  const angleStep = (Math.PI * 2) / Math.max(totalAgents, 1);
+  const angle = agentIndex * angleStep;
+  const x = centerX + Math.cos(angle) * radius;
+  const y = centerY + Math.sin(angle) * radius * 0.7;
+  return [x, y];
+}
+
+function getAgentPosition(id, W, H) {
+  if (!(id in agentPositions)) {
+    agentPositions[id] = positionAssignments.length;
+    positionAssignments.push(id);
+  }
+  const index = agentPositions[id];
+  const totalAgents = positionAssignments.length;
+  return calculateRadialPos(index, totalAgents, W, H);
+}
+
+class Sprite {
+  constructor(x, y, hue) {
+    this.x = x; this.y = y;
+    this.tx = x; this.ty = y;
+    this.vx = 0; this.vy = 0;
+    this.hue = hue;
+    this.phase = Math.random() * Math.PI * 2;
+    this.wanderOffset = { x: 0, y: 0 };
+    this.wanderTarget = { x: 0, y: 0 };
+    this.wanderTimer = 0;
+    this.fiddlePhase = Math.random() * Math.PI * 2;
+    this.blinkTimer = Math.random() * 3;
+    this.isBlinking = false;
+    this.currentStatus = "idle";
+    this.targetStatus = "idle";
+    this.currentPulse = 0.4;
+    this.currentRadius = 22;
+    this.currentAlpha = 160;
+    this.currentBobSpeed = 0.8;
+    this.targetPulse = 0.4;
+    this.targetRadius = 22;
+    this.targetAlpha = 160;
+    this.targetBobSpeed = 0.8;
+    this.editPanelPhase = "idle";
+    this.editPanelStartTime = 0;
+    this.editPanelClosing = false;
+    this.editPanelCloseStart = 0;
+    this.editPanelShowTime = null;
+    this.previousStatus = "idle";
+  }
+}
+
+new p5((p) => {
+  p.setup = () => {
+    const cnv = p.createCanvas(p.windowWidth, p.windowHeight);
+    cnv.position(0, 0);
+    p.pixelDensity(window.devicePixelRatio || 1);
+    p.textFont("monospace");
+  };
+
+  p.windowResized = () => {
+    p.resizeCanvas(p.windowWidth, p.windowHeight);
+  };
+
+  p.draw = () => {
+    if (!agents || Object.keys(agents).length === 0) {
+      p.background(...FLOOR_COLOR);
+      p.fill(50, 50, 70);
+      p.textSize(14);
+      p.textAlign(p.CENTER);
+      p.text("Waiting for mockup server...", p.width / 2, p.height / 2);
+      return;
+    }
+
+    p.background(...FLOOR_COLOR);
+    p.stroke(...GRID_COLOR);
+    p.strokeWeight(1);
+    for (let x = 0; x < p.width; x += GRID_SIZE) p.line(x, 0, x, p.height);
+    for (let y = 0; y < p.height; y += GRID_SIZE) p.line(0, y, p.width, y);
+
+    const now = p.millis() / 1000;
+    for (const agent of Object.values(agents)) {
+      try {
+        let [targetX, targetY] = getAgentPosition(agent.id, p.width, p.height);
+        if (!agent._sprite) {
+          agent._sprite = new Sprite(targetX, targetY - 20, agent.color);
+          const cfg = STATUS_CFG[agent.status] || STATUS_CFG.idle;
+          agent._sprite.currentPulse = cfg.pulse;
+          agent._sprite.currentRadius = cfg.radius;
+          agent._sprite.currentAlpha = cfg.opacity;
+        }
+        const sp = agent._sprite;
+
+        // Update status transition
+        const cfg = STATUS_CFG[agent.status] || STATUS_CFG.idle;
+        if (sp.targetStatus !== agent.status) {
+          sp.currentStatus = sp.targetStatus;
+          sp.targetStatus = agent.status;
+          sp.targetPulse = cfg.pulse;
+          sp.targetRadius = cfg.radius;
+          sp.targetAlpha = cfg.opacity;
+          if (agent.status === "idle") sp.targetBobSpeed = 0.8;
+          else if (agent.status === "editing") sp.targetBobSpeed = 1.5;
+          else if (agent.status === "running") sp.targetBobSpeed = 5;
+          else sp.targetBobSpeed = 2;
+        }
+        const lerp = 0.1;
+        sp.currentPulse += (sp.targetPulse - sp.currentPulse) * lerp;
+        sp.currentRadius += (sp.targetRadius - sp.currentRadius) * lerp;
+        sp.currentAlpha += (sp.targetAlpha - sp.currentAlpha) * lerp;
+        sp.currentBobSpeed += (sp.targetBobSpeed - sp.currentBobSpeed) * lerp;
+
+        // Wander
+        sp.wanderTimer -= 1/60;
+        if (sp.wanderTimer <= 0) {
+          sp.wanderTimer = 3 + Math.random() * 5;
+          sp.wanderTarget.x = (Math.random() - 0.5) * 60;
+          sp.wanderTarget.y = (Math.random() - 0.5) * 30;
+        }
+        sp.wanderOffset.x += (sp.wanderTarget.x - sp.wanderOffset.x) * 0.02;
+        sp.wanderOffset.y += (sp.wanderTarget.y - sp.wanderOffset.y) * 0.02;
+
+        // Blink
+        sp.blinkTimer -= 1/60;
+        if (sp.blinkTimer <= 0) { sp.isBlinking = true; sp.blinkTimer = 0.1; }
+        if (sp.isBlinking && sp.blinkTimer <= 0) { sp.isBlinking = false; sp.blinkTimer = 2 + Math.random() * 4; }
+
+        // Move
+        sp.tx = targetX + sp.wanderOffset.x;
+        sp.ty = targetY - 20 + sp.wanderOffset.y;
+        const stiffness = 0.03, damping = 0.85;
+        sp.vx = sp.vx * damping + (sp.tx - sp.x) * stiffness;
+        sp.vy = sp.vy * damping + (sp.ty - sp.y) * stiffness;
+        sp.x += sp.vx;
+        sp.y += sp.vy;
+
+        const pulse = Math.sin(now * sp.currentPulse * Math.PI * 2 + sp.phase);
+        const radius = sp.currentRadius + pulse * 3;
+        const alpha = sp.currentAlpha;
+
+        // Glow ring
+        const currentCfg = STATUS_CFG[agent.status] || STATUS_CFG.idle;
+        if (currentCfg.ring) {
+          let ringPulse = now * (agent.status === "thinking" ? 1 : 2.5);
+          const glowAlpha = (0.3 + 0.2 * Math.sin(ringPulse + sp.phase)) * alpha;
+          p.noFill();
+          p.strokeWeight(2);
+          p.stroke(p.color(`hsla(${agent.color}, 80%, 65%, ${glowAlpha / 255})`));
+          p.ellipse(sp.x, sp.y, (radius + 10) * 2, (radius + 10) * 2);
+        }
+
+        const isError = agent.status === "error";
+        const isWaiting = agent.status === "waiting";
+        const shakeX = isWaiting ? Math.sin(now * 6) * 1.5 : 0;
+        const vibrateX = isError ? Math.sin(now * 12) * 1 : 0;
+        const drawX = sp.x + shakeX + vibrateX;
+        const drawY = sp.y;
+
+        let bobAmplitude = agent.status === "editing" ? 1 : (agent.status === "running" ? 4 : 2);
+        const bobY = Math.sin(now * sp.currentBobSpeed + sp.phase) * bobAmplitude;
+
+        // Shadow
+        p.noStroke();
+        p.fill(0, 0, 0, 60);
+        p.ellipse(drawX + 2 + sp.wanderOffset.x * 0.3, drawY + radius * 0.8 + 4, radius * 1.92, radius * 0.5);
+
+        // Body
+        const bodyHue = isError ? (agent.color + 20) % 360 : agent.color;
+        p.fill(p.color(`hsla(${bodyHue}, 70%, 35%, ${(alpha * 0.6) / 255})`));
+        p.ellipse(drawX, drawY + bobY, radius * 2 * 1.2, radius * 2);
+        p.fill(p.color(`hsla(${bodyHue}, 80%, 60%, ${alpha / 255})`));
+        p.ellipse(drawX - radius * 0.1, drawY + bobY - radius * 0.05, radius * 2.04, radius * 1.7);
+
+        // Red pulse for error
+        if (isError) {
+          p.fill(255, 80, 80, alpha * 0.15 * (0.5 + 0.5 * Math.sin(now * 5)));
+          p.ellipse(drawX, drawY + bobY, radius * 2.64, radius * 2.2);
+        }
+
+        // Highlight
+        p.fill(p.color(`hsla(${bodyHue}, 60%, 90%, ${(alpha * 0.35) / 255})`));
+        p.ellipse(drawX - radius * 0.3, drawY + bobY - radius * 0.3, radius * 0.96, radius * 0.6);
+
+        // Eyes
+        const eyeY = drawY + bobY - radius * 0.1;
+        if (sp.isBlinking) {
+          p.stroke(10, 10, 30, alpha);
+          p.strokeWeight(2);
+          p.line(drawX - radius * 0.35, eyeY, drawX - radius * 0.105, eyeY);
+          p.line(drawX + radius * 0.105, eyeY, drawX + radius * 0.35, eyeY);
+          p.noStroke();
+        } else {
+          p.fill(255, 255, 255, alpha * 0.9);
+          p.ellipse(drawX - radius * 0.22, eyeY, 5, 6);
+          p.ellipse(drawX + radius * 0.22, eyeY, 5, 6);
+          let pupilShift = 0, pupilV = 1;
+          if (agent.status === "thinking") { pupilShift = Math.sin(now * 3) * 1.5; pupilV = 0; }
+          else if (agent.status === "reading") { pupilShift = Math.sin(now * 0.5) * 0.5; pupilV = 0.5; }
+          else if (agent.status === "running") { pupilShift = Math.sin(now * 10) * 1; }
+          else if (agent.status === "waiting") { pupilShift = Math.sin(now * 2) * 1; }
+          p.fill(10, 10, 30, alpha);
+          p.ellipse(drawX - radius * 0.22 + pupilShift, eyeY + pupilV, 2.5, 3);
+          p.ellipse(drawX + radius * 0.22 + pupilShift, eyeY + pupilV, 2.5, 3);
+          if (isError) {
+            p.stroke(10, 10, 30, alpha);
+            p.strokeWeight(1.5);
+            const ex = 2.5;
+            p.line(drawX - radius * 0.22 - ex, eyeY - 1, drawX - radius * 0.22 + ex, eyeY + 1);
+            p.line(drawX - radius * 0.22 + ex, eyeY - 1, drawX - radius * 0.22 - ex, eyeY + 1);
+            p.line(drawX + radius * 0.22 - ex, eyeY - 1, drawX + radius * 0.22 + ex, eyeY + 1);
+            p.line(drawX + radius * 0.22 + ex, eyeY - 1, drawX + radius * 0.22 - ex, eyeY + 1);
+            p.noStroke();
+          }
+        }
+
+        // Status-specific animations
+        const fudge = Math.sin(now * 2 + sp.fiddlePhase);
+        const fudge2 = Math.cos(now * 1.5 + sp.fiddlePhase * 1.3);
+        p.push();
+        p.textAlign(p.CENTER, p.CENTER);
+
+        switch (agent.status) {
+          case "editing": {
+            // Code panel (simplified)
+            const panelX = sp.x - radius * 4.2;
+            const panelY = sp.y - radius * 0.3 - 10;
+            p.noStroke();
+            p.fill(40, 44, 52, alpha * 0.95);
+            p.rect(panelX - 60, panelY - 35, 120, 70, 4);
+            p.stroke(152, 195, 121, alpha * 0.6);
+            p.strokeWeight(1);
+            p.noFill();
+            p.rect(panelX - 60, panelY - 35, 120, 70, 4);
+            p.textSize(8);
+            p.textAlign(p.LEFT, p.CENTER);
+            p.fill(97, 175, 239, alpha * 0.95);
+            p.text("src/index.ts", panelX - 50, panelY);
+            const cursorBlink = Math.sin(now * 6) > 0;
+            if (cursorBlink) {
+              p.fill(97, 175, 239, alpha * 0.8);
+              p.rect(panelX + 55, panelY - 2, 2, 5, 0.5);
+            }
+            break;
+          }
+          case "reading": {
+            const bookX = sp.x + radius * 1.4;
+            const bookY = sp.y + radius * 0.3;
+            const bookOpen = 0.5 + 0.5 * Math.sin(now * 1.2);
+            p.textSize(14);
+            p.push();
+            p.translate(bookX, bookY);
+            p.scale(1, bookOpen > 0.5 ? 1 : -0.8);
+            p.text("📖", 0, 0);
+            p.pop();
+            // Glasses
+            p.push();
+            p.translate(sp.x, sp.y - radius * 0.6);
+            const glassesWobble = Math.sin(now * 0.8) * 2;
+            p.textSize(10);
+            p.text("👓", glassesWobble, 0);
+            p.pop();
+            break;
+          }
+          case "running": {
+            p.noStroke();
+            p.fill(255, 255, 255, alpha * 0.3);
+            for (let i = 0; i < 3; i++) {
+              const streakX = sp.x - radius * 1.5 - i * 15 - Math.abs(fudge) * 5;
+              const streakY = sp.y + fudge2 * 4;
+              p.ellipse(streakX, streakY, 8 - i * 2, 3);
+            }
+            break;
+          }
+          case "thinking": {
+            for (let i = 0; i < 3; i++) {
+              const particlePhase = (now * 0.8 + i * 0.7 + sp.fiddlePhase) % 3;
+              const px = sp.x + Math.sin(now * 2 + i) * 20;
+              const py = sp.y - radius * (1 + particlePhase);
+              const pAlpha = alpha * (1 - particlePhase / 3) * 0.5;
+              p.textSize(8 + i * 2);
+              p.fill(200, 180, 255, pAlpha);
+              p.text("✨", px, py);
+            }
+            break;
+          }
+          case "idle": {
+            if (Math.sin(now * 0.5 + sp.fiddlePhase) > 0.85) {
+              p.textSize(10);
+              p.fill(255, 255, 200, alpha * 0.6);
+              p.text("✨", sp.x + radius * 1.4, sp.y + radius * 0.3 - 10);
+            }
+            break;
+          }
+          case "waiting": {
+            p.textSize(14);
+            p.fill(255, 220, 100, alpha * (0.6 + 0.4 * Math.sin(now * 3)));
+            const qmBounce = Math.abs(Math.sin(now * 3)) * 8;
+            p.text("❓", sp.x + radius * 1.4, sp.y + radius * 0.3 - qmBounce);
+            break;
+          }
+          case "error": {
+            p.textSize(12);
+            p.fill(255, 100, 100, alpha * (0.5 + 0.3 * Math.sin(now * 5)));
+            p.text("⚡", sp.x + radius * 1.4 + fudge * 6, sp.y + radius * 0.3);
+            break;
+          }
+        }
+        p.pop();
+
+        // Speech bubble
+        if (agent.message) {
+          p.push();
+          p.textSize(11);
+          const tw = p.textWidth(agent.message);
+          const bw = tw + 18;
+          const bh = 22;
+          const bx = drawX - bw / 2;
+          const by = drawY - 72;
+          p.noStroke();
+          p.fill(10, 10, 20, alpha * 0.92);
+          p.rect(bx, by, bw, bh, 6);
+          p.stroke(p.color(`hsla(${agent.color}, 70%, 60%, ${alpha / 255})`));
+          p.strokeWeight(1);
+          p.noFill();
+          p.rect(bx, by, bw, bh, 6);
+          p.noStroke();
+          p.fill(10, 10, 20, alpha * 0.92);
+          p.triangle(drawX - 5, by + bh, drawX + 5, by + bh, drawX, by + bh + 8);
+          p.noStroke();
+          p.fill(220, 220, 255, alpha);
+          p.textAlign(p.CENTER, p.CENTER);
+          p.text(agent.message, drawX, by + bh / 2 + 1);
+          p.pop();
+        }
+
+        // Name tag
+        p.push();
+        p.textSize(10);
+        p.textAlign(p.CENTER, p.CENTER);
+        const tw = p.textWidth(agent.folder);
+        const bw = tw + 14;
+        const bh = 16;
+        const bx = drawX - bw / 2;
+        const by = drawY + 32;
+        p.noStroke();
+        p.fill(10, 10, 20, 200);
+        p.rect(bx, by, bw, bh, 3);
+        p.fill(p.color(`hsla(${agent.color}, 70%, 65%, 0.9)`));
+        p.text(agent.folder, drawX, by + bh / 2 + 1);
+        const dotColors = {
+          idle: [80, 80, 80],
+          thinking: [180, 160, 255],
+          editing: [100, 255, 150],
+          reading: [100, 200, 255],
+          running: [255, 180, 80],
+          waiting: [255, 220, 60],
+          error: [255, 80, 80],
+        };
+        const dc = dotColors[agent.status] || [120, 120, 120];
+        p.fill(...dc, 230);
+        p.ellipse(bx - 6, by + bh / 2, 5, 5);
+        p.pop();
+      } catch {}
+    }
+  };
+});
+</script>
+</body>
+</html>

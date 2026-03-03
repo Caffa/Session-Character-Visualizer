@@ -1,4 +1,4 @@
-# 🏢 Pixel Office
+# 🏢 Session Character Visualizer
 
 ![Demo](media-previews/main_show.gif)
 
@@ -6,7 +6,7 @@ OpenCode plugin for visualizing AI coding sessions in a virtual office workspace
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 
-Pixel Office creates a blob character visualization of your coding sessions. Each session appears as a colored agent with speech bubbles showing current status and activity. Subagents show as smaller blobs orbitting their parents.
+Session Character Visualizer creates a blob character visualization of your coding sessions. Each session appears as a colored agent with speech bubbles showing current status and activity. Subagents show as smaller blobs orbitting their parents.
 
 ![subagents](media-previews/subagents.gif)
 
@@ -124,6 +124,14 @@ cd media-previews
 
 ---
 
+## Related Projects
+
+**[Pixel Office](https://github.com/Caffa/Pixel-Office)** - A VSCode & Claude-based visualization plugin with a similar concept. While this plugin (Session Character Visualizer) is designed specifically for OpenCode, Pixel Office provides a similar character visualization experience for VSCode users working with Claude.
+
+Both projects share the goal of making AI coding sessions more engaging and visual, but are built for different platforms and AI coding environments.
+
+---
+
 ## License
 
 MIT License - see LICENSE file.
@@ -132,4 +140,4 @@ MIT License - see LICENSE file.
 
 ## About
 
-Pixel Office is a community plugin for [OpenCode](https://github.com/anomalyco/opencode), not affiliated with the OpenCode team.
+Session Character Visualizer is a community plugin for [OpenCode](https://github.com/anomalyco/opencode), not affiliated with the OpenCode team.
