@@ -153,10 +153,37 @@ export const BlobOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 		}
 	};
 
-	// Helper to show system notification on macOS
+	// Helper to show system notification on macOS with clickable action
+	// Clicking the notification opens the Blob Office viewer
 	const notify = async (title: string, message: string) => {
 		try {
-			await $`osascript -e 'display notification "${message}" with title "${title}"'`;
+			const viewerPath = `${process.env.HOME}/.config/opencode/plugins/blob-office.html`;
+
+			// Write a temporary AppleScript that handles the notification click
+			const scriptContent = `on run
+	display notification "${message}" with title "${title}"
+end run
+
+on clicked theNotification
+	do shell script "open '${viewerPath}'"
+end clicked
+`;
+			const tmpFile = `/tmp/blob-office-notify-${Date.now()}.scpt`;
+			await Bun.write(tmpFile, scriptContent);
+
+			// Run the script and clean up
+			const proc = Bun.spawn(["osascript", tmpFile], {
+				stdout: "ignore",
+				stderr: "ignore",
+			});
+			await proc.exited;
+
+			// Clean up temp file
+			try {
+				await Bun.file(tmpFile).delete();
+			} catch {
+				// Ignore cleanup errors
+			}
 		} catch {
 			// Silently fail if notifications aren't available
 		}
@@ -220,8 +247,8 @@ export const BlobOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 	let serverWasAlreadyRunning = false;
 
 	async function openViewer() {
-		// Don't open browser if server was already running (from previous OpenCode session)
-		if (browserOpened || serverWasAlreadyRunning) return;
+		// Don't open browser twice in the same session
+		if (browserOpened) return;
 		browserOpened = true;
 		// Find the viewer — look next to the plugin file, then home
 		const candidates = [
