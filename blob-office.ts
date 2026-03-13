@@ -153,37 +153,10 @@ export const BlobOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 		}
 	};
 
-	// Helper to show system notification on macOS with clickable action
-	// Clicking the notification opens the Blob Office viewer
+	// Helper to show system notification on macOS
 	const notify = async (title: string, message: string) => {
 		try {
-			const viewerPath = `${process.env.HOME}/.config/opencode/plugins/blob-office.html`;
-
-			// Write a temporary AppleScript that handles the notification click
-			const scriptContent = `on run
-	display notification "${message}" with title "${title}"
-end run
-
-on clicked theNotification
-	do shell script "open '${viewerPath}'"
-end clicked
-`;
-			const tmpFile = `/tmp/blob-office-notify-${Date.now()}.scpt`;
-			await Bun.write(tmpFile, scriptContent);
-
-			// Run the script and clean up
-			const proc = Bun.spawn(["osascript", tmpFile], {
-				stdout: "ignore",
-				stderr: "ignore",
-			});
-			await proc.exited;
-
-			// Clean up temp file
-			try {
-				await Bun.file(tmpFile).delete();
-			} catch {
-				// Ignore cleanup errors
-			}
+			await $`osascript -e 'display notification "${message}" with title "${title}"'`;
 		} catch {
 			// Silently fail if notifications aren't available
 		}
@@ -244,12 +217,52 @@ end clicked
 	// ── Auto-open browser ─────────────────────────────────────────────────────
 
 	let browserOpened = false;
+
+	// Marker file to track if viewer was already opened today
+	const MARKER_FILE = `${process.env.HOME}/.config/opencode/plugins/.viewer-opened-today`;
+
+	// Track if server was already running (for sync purposes)
 	let serverWasAlreadyRunning = false;
 
-	async function openViewer() {
-		// Don't open browser twice in the same session
-		if (browserOpened) return;
-		browserOpened = true;
+	// Get today's date as YYYY-MM-DD string
+	function getTodayDate(): string {
+		return new Date().toISOString().split('T')[0];
+	}
+
+	// Check if viewer was already opened today
+	async function wasOpenedToday(): Promise<boolean> {
+		try {
+			const file = Bun.file(MARKER_FILE);
+			if (!await file.exists()) return false;
+			const content = await file.text();
+			return content.trim() === getTodayDate();
+		} catch {
+			return false;
+		}
+	}
+
+	// Update marker file with today's date
+	async function markOpenedToday(): Promise<void> {
+		try {
+			await Bun.write(MARKER_FILE, getTodayDate());
+		} catch {
+			// Ignore - non-critical
+		}
+	}
+
+	async function openViewer(agentCount: number) {
+		// If this is the first agent ever, always open
+		const isFirstAgent = agentCount === 0;
+
+		// If not first agent, check if we already opened today
+		if (!isFirstAgent) {
+			const openedToday = await wasOpenedToday();
+			if (openedToday) {
+				// Already opened today, skip
+				return;
+			}
+		}
+
 		// Find the viewer — look next to the plugin file, then home
 		const candidates = [
 			`${process.env.HOME}/.config/opencode/plugins/blob-office.html`,
@@ -268,6 +281,8 @@ end clicked
 		try {
 			const proc = Bun.spawn(cmd, { stdout: "ignore", stderr: "ignore" });
 			await proc.exited;
+			// Mark that viewer was opened today
+			await markOpenedToday();
 		} catch {
 			log("info", `Open viewer manually: ${viewer}`);
 		}
@@ -614,7 +629,8 @@ end clicked
 
 					log("info", `Agent added, total agents: ${agents.size}`);
 					broadcast();
-					openViewer();
+					// Pass count BEFORE this agent was added to determine if it's first
+					openViewer(agents.size - 1);
 					break;
 				}
 
@@ -701,7 +717,8 @@ end clicked
 						}
 					}
 					broadcast();
-					openViewer();
+					// Pass count BEFORE this update to determine if it's first
+					openViewer(agents.size - 1);
 					break;
 				}
 
