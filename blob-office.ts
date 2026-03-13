@@ -133,6 +133,7 @@ export const BlobOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 	const PORT = 2727;
 	const agents = new Map<string, AgentState>();
 	const clients = new Set<globalThis.WebSocket>();
+	const disposedAgents = new Set<string>();
 
 	// Helper for structured logging (goes to OpenCode log, not terminal)
 	const log = async (
@@ -206,6 +207,10 @@ export const BlobOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 		const a = agents.get(id);
 		if (!a) return;
 		Object.assign(a, patch, { since: Date.now() });
+		// Remove from disposed set if agent receives an update (user resumed)
+		if (disposedAgents.has(id)) {
+			disposedAgents.delete(id);
+		}
 		broadcast();
 	}
 
@@ -273,7 +278,7 @@ export const BlobOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 		}, 25000); // Heartbeat every 25 seconds
 	}
 
-	// Start cleanup interval to remove idle subagents after 10 seconds
+	// Start cleanup interval to remove idle subagents after 3 seconds and disposed agents after 10s
 	function startIdleCleanup() {
 		if (idleCleanupInterval) return;
 		idleCleanupInterval = setInterval(() => {
@@ -281,11 +286,21 @@ export const BlobOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 			const toDelete: string[] = [];
 
 			for (const [id, agent] of agents) {
-				// Only cleanup subagents (have parentID) that have been idle for 10+ seconds
+				// Cleanup disposed main agents (user exited) after 10 seconds of inactivity
+				if (!agent.parentID && disposedAgents.has(id)) {
+					const inactiveTime = now - agent.since;
+					if (inactiveTime > 10000) {
+						// 10 seconds
+						toDelete.push(id);
+						disposedAgents.delete(id);
+					}
+				}
+
+				// Cleanup subagents (have parentID) that have been idle for 3+ seconds
 				if (agent.parentID && agent.status === "idle" && agent.idleSince) {
 					const idleTime = now - agent.idleSince;
-					if (idleTime > 10000) {
-						// 10 seconds
+					if (idleTime > 3000) {
+						// 3 seconds
 						toDelete.push(id);
 					}
 				}
@@ -294,6 +309,7 @@ export const BlobOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 			if (toDelete.length > 0) {
 				for (const id of toDelete) {
 					agents.delete(id);
+					agentFileActivity.delete(id);
 				}
 				broadcast();
 			}
@@ -745,6 +761,22 @@ export const BlobOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 						status: "thinking",
 						message: "🧠 thinking…",
 					});
+					break;
+				}
+
+				// Server instance disposed - user exited (Ctrl-C or /exit)
+				case "server.instance.disposed": {
+					log(
+						"info",
+						`Instance disposed - marking ${agents.size} agents for removal after 10s inactivity`,
+					);
+					// Mark all current main agents as disposed
+					for (const id of agents.keys()) {
+						const agent = agents.get(id);
+						if (agent && !agent.parentID) {
+							disposedAgents.add(id);
+						}
+					}
 					break;
 				}
 			}
