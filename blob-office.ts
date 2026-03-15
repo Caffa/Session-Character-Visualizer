@@ -251,6 +251,12 @@ export const BlobOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 	}
 
 	async function openViewer(agentCount: number) {
+		// Check if a viewer is already open (connected clients)
+		if (clients.size > 0) {
+			log("info", `Viewer already open (${clients.size} clients connected), skipping`);
+			return;
+		}
+
 		// If this is the first agent ever, always open
 		const isFirstAgent = agentCount === 0;
 
@@ -283,6 +289,7 @@ export const BlobOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 			await proc.exited;
 			// Mark that viewer was opened today
 			await markOpenedToday();
+			log("info", "Viewer opened successfully");
 		} catch {
 			log("info", `Open viewer manually: ${viewer}`);
 		}
