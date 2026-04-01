@@ -84,6 +84,31 @@ blob-office.ts (OpenCode plugin)
 
 ## Configuration
 
+### Viewer Open Frequency
+
+By default, the viewer opens **once per day** per project. If you open multiple OpenCode sessions, the viewer will only open on the first session of each day.
+
+You can change this behavior by creating a settings file:
+
+```bash
+# Create settings file
+mkdir -p ~/.config/opencode/plugins
+cat > ~/.config/opencode/plugins/blob-office.settings.json << 'EOF'
+{
+  "viewerOpenFrequency": "every-session"
+}
+EOF
+```
+
+**Options:**
+
+| Setting | Behavior |
+| -------- | ------- |
+| `"once-per-day"` | (Default) Opens viewer only once per day per project |
+| `"every-session"` | Opens viewer for every new OpenCode session |
+
+### WebSocket Port
+
 Change WebSocket port in:
 
 1. `blob-office.ts`: `PORT = 2727`

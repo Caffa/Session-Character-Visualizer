@@ -1,0 +1,30 @@
+{
+  "stateVersion": 9,
+  "pendingNextTurnObservation": {
+    "suggestionTurnId": "49bd4bc2",
+    "suggestionShownAt": "2026-04-01T05:33:43.690Z",
+    "userPromptSubmittedAt": "2026-04-01T09:07:12.066Z",
+    "variantName": "default",
+    "strategy": "compact",
+    "requestedStrategy": "compact"
+  },
+  "steeringHistory": [
+    {
+      "turnId": "c777f21a",
+      "suggestedPrompt": "Add a CLI flag to toggle this setting easier",
+      "actualUserPrompt": "Help me reinstall it (for opencode)",
+      "classification": "changed_course",
+      "similarity": 0.1518987341772152,
+      "timestamp": "2026-04-01T05:32:58.190Z"
+    },
+    {
+      "turnId": "49bd4bc2",
+      "suggestedPrompt": "Option 1, I just don't want duplicate tabs",
+      "actualUserPrompt": "Option 1, I just don't want duplicate tabs",
+      "classification": "accepted_exact",
+      "similarity": 1,
+      "timestamp": "2026-04-01T09:07:12.066Z"
+    }
+  ],
+  "turnsSinceLastStalenessCheck": 2
+}

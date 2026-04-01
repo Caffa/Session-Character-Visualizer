@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "sessionId": "06c99dce-af73-4d9b-a124-5121d683cfc9",
+  "sessionFile": "/Users/caffae/.pi/agent/sessions/--Users-caffae-Local-Projects-2026-Wild-Projects-Pixel-Agent-Visualizer-V2-My-Opencode-Pixel-Agent--/2026-04-01T09-07-19-607Z_06c99dce-af73-4d9b-a124-5121d683cfc9.jsonl",
+  "cwd": "/Users/caffae/Local-Projects-2026/Wild-Projects/Pixel-Agent-Visualizer/V2-My-Opencode-Pixel-Agent",
+  "ignoreLegacyPiSessionEntries": true,
+  "legacyMigration": {
+    "performedAt": "2026-04-01T09:07:19.645Z",
+    "importedLegacyEntries": false,
+    "legacyStateEntryCount": 0,
+    "legacyUsageEntryCount": 0,
+    "note": "Legacy suggester-state/suggester-usage pi session entries were imported once into extension-owned storage and are ignored afterwards."
+  }
+}

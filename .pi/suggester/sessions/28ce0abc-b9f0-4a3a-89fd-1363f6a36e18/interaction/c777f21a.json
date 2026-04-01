@@ -1,0 +1,14 @@
+{
+  "stateVersion": 9,
+  "lastSuggestion": {
+    "text": "Add a CLI flag to toggle this setting easier",
+    "shownAt": "2026-04-01T05:31:57.998Z",
+    "turnId": "c777f21a",
+    "sourceLeafId": "c777f21a",
+    "variantName": "default",
+    "strategy": "compact",
+    "requestedStrategy": "compact"
+  },
+  "steeringHistory": [],
+  "turnsSinceLastStalenessCheck": 1
+}

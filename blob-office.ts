@@ -24,6 +24,13 @@ type AgentStatus =
 	| "waiting"
 	| "error";
 
+// Viewer open frequency settings
+type ViewerOpenFrequency = "once-per-day" | "every-session";
+
+interface BlobOfficeSettings {
+	viewerOpenFrequency: ViewerOpenFrequency;
+}
+
 interface AgentState {
 	id: string;
 	parentID: string | null; // ID of parent agent if this is a subagent
@@ -220,6 +227,25 @@ export const BlobOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 
 	// Marker file to track if viewer was already opened today
 	const MARKER_FILE = `${process.env.HOME}/.config/opencode/plugins/.viewer-opened-today`;
+	// Settings file for user preferences
+	const SETTINGS_FILE = `${process.env.HOME}/.config/opencode/plugins/blob-office.settings.json`;
+
+	// Default settings (user can override via settings file)
+	const DEFAULT_SETTINGS: BlobOfficeSettings = {
+		viewerOpenFrequency: "once-per-day",
+	};
+
+	// Load settings from file
+	async function loadSettings(): Promise<BlobOfficeSettings> {
+		try {
+			const file = Bun.file(SETTINGS_FILE);
+			if (!await file.exists()) return DEFAULT_SETTINGS;
+			const content = await file.json() as Partial<BlobOfficeSettings>;
+			return { ...DEFAULT_SETTINGS, ...content };
+		} catch {
+			return DEFAULT_SETTINGS;
+		}
+	}
 
 	// Track if server was already running (for sync purposes)
 	let serverWasAlreadyRunning = false;
@@ -257,16 +283,23 @@ export const BlobOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 			return;
 		}
 
-		// If this is the first agent ever, always open
+		// Load user settings
+		const settings = await loadSettings();
+
+		// If this is the first agent ever, open viewer
 		const isFirstAgent = agentCount === 0;
 
-		// If not first agent, check if we already opened today
+		// Check if we should skip opening based on settings
 		if (!isFirstAgent) {
-			const openedToday = await wasOpenedToday();
-			if (openedToday) {
-				// Already opened today, skip
-				return;
+			if (settings.viewerOpenFrequency === "once-per-day") {
+				// Only open once per day
+				const openedToday = await wasOpenedToday();
+				if (openedToday) {
+					// Already opened today, skip
+					return;
+				}
 			}
+			// If set to "every-session", we always open (no check needed)
 		}
 
 		// Find the viewer — look next to the plugin file, then home
@@ -287,7 +320,7 @@ export const BlobOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 		try {
 			const proc = Bun.spawn(cmd, { stdout: "ignore", stderr: "ignore" });
 			await proc.exited;
-			// Mark that viewer was opened today
+			// Mark that viewer was opened today (only needed for once-per-day mode)
 			await markOpenedToday();
 			log("info", "Viewer opened successfully");
 		} catch {
