@@ -12,6 +12,7 @@
  */
 
 import type { Plugin } from "@opencode-ai/plugin";
+import { tool } from "@opencode-ai/plugin";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -137,31 +138,41 @@ export const BlobOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 	// Clear any stale activity data from previous sessions
 	agentFileActivity.clear();
 
+	// Detect if running in headless/background mode (e.g., task runner with --format json)
+	// In these contexts, skip WebSocket server and GUI operations to avoid errors
+	const isHeadless = process.stdout.isTTY === false || process.env.CI === 'true' || process.env.OPENCODE_HEADLESS === 'true';
+
 	const PORT = 2727;
 	const agents = new Map<string, AgentState>();
 	const clients = new Set<globalThis.WebSocket>();
 	const disposedAgents = new Set<string>();
 
 	// Helper for structured logging (goes to OpenCode log, not terminal)
+	// Checks if log is actually a function to avoid "is not a function" errors
+	// in headless/background contexts (e.g., task runner)
 	const log = async (
 		level: "debug" | "info" | "warn" | "error",
 		msg: string,
 	) => {
 		try {
-			await client?.app?.log?.({
-				body: {
-					service: "blob-office",
-					level,
-					message: msg,
-				},
-			});
+			if (typeof client?.app?.log === 'function') {
+				await client.app.log({
+					body: {
+						service: "blob-office",
+						level,
+						message: msg,
+					},
+				});
+			}
 		} catch {
 			// Fallback to console if logging fails
 		}
 	};
 
 	// Helper to show system notification on macOS
+	// Skip in headless mode (no GUI available)
 	const notify = async (title: string, message: string) => {
+		if (isHeadless) return;
 		try {
 			await $`osascript -e 'display notification "${message}" with title "${title}"'`;
 		} catch {
@@ -277,6 +288,9 @@ export const BlobOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 	}
 
 	async function openViewer(agentCount: number) {
+		// Skip in headless mode (no GUI available)
+		if (isHeadless) return;
+		
 		// Check if a viewer is already open (connected clients)
 		if (clients.size > 0) {
 			log("info", `Viewer already open (${clients.size} clients connected), skipping`);
@@ -398,8 +412,11 @@ export const BlobOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 		}, 1000); // Check every second
 	}
 
-	try {
-		wss = Bun.serve({
+	// Skip WebSocket server and GUI operations in headless mode
+	// to avoid errors when running via task runner with --format json
+	if (!isHeadless) {
+		try {
+			wss = Bun.serve({
 			port: PORT,
 			fetch(req, server) {
 				// Handle WebSocket upgrade
@@ -425,10 +442,19 @@ export const BlobOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 					log("info", "Client disconnected");
 					clients.delete(ws as unknown as globalThis.WebSocket);
 				},
-				message(ws, message) {
+				message: async (ws, message) => {
 					// Handle incoming sync messages from other plugin instances
+					// Also handle commands from TUI plugin (slash commands)
 					try {
 						const msg = JSON.parse(message.toString());
+
+						// Handle slash command to open visualizer from TUI
+						if (msg.type === "open_viewer") {
+							log("info", "Received open_viewer command from TUI");
+							await openViewer(agents.size);
+							return;
+						}
+
 						if (
 							msg.type === "agent_update" ||
 							msg.type === "full_sync" ||
@@ -521,6 +547,14 @@ export const BlobOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 		} else {
 			log("error", `Failed to start WebSocket server: ${err}`);
 		}
+	}
+
+	// Only register signal handlers when running as a server instance
+	// to prevent issues in headless/background mode
+	if (isServerInstance) {
+		process.on("SIGINT", () => cleanup("SIGINT"));
+		process.on("SIGTERM", () => cleanup("SIGTERM"));
+	}
 	}
 
 	// ── Cleanup on process exit ───────────────────────────────────────────────
@@ -788,11 +822,20 @@ export const BlobOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 				}
 
 				// Status updates (thinking, etc)
+				// OpenCode 1.3.3: status is a string ("thinking", "generating", "idle")
+				// OpenCode 1.3.13+: status is an object {type: "idle" | "busy" | "retry"}
+				// Handle both formats for backward compatibility
 				case "session.status": {
-					const sessionID = eventProps.sessionID as string;
-					const status = (eventProps.status as string).toLowerCase();
+					const sessionID = eventProps.sessionID as string | undefined;
 					if (!sessionID || !agents.has(sessionID)) return;
-					if (status === "thinking" || status === "generating") {
+					
+					// Handle both string format (older) and object format (newer)
+					const statusValue = eventProps.status;
+					const statusType = typeof statusValue === 'string' 
+						? statusValue.toLowerCase()
+						: (statusValue as { type: string } | undefined)?.type?.toLowerCase();
+					
+					if (statusType === "busy" || statusType === "thinking" || statusType === "generating") {
 						updateAgent(sessionID, {
 							status: "thinking",
 							message: "🧠 thinking…",
@@ -803,7 +846,7 @@ export const BlobOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 
 				// Session error
 				case "session.error": {
-					const sessionID = eventProps.sessionID as string;
+					const sessionID = eventProps.sessionID as string | undefined;
 					if (!sessionID || !agents.has(sessionID)) return;
 					updateAgent(sessionID, { status: "error", message: "❌ error" });
 					break;
@@ -865,5 +908,35 @@ export const BlobOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 				}
 			}
 		},
+
+		// Intercept slash commands like /visualizer or /blob-office
+		"command.execute.before": async (input, _output) => {
+			const { command } = input as { command: string; arguments: string; sessionID: string };
+
+			const cmd = command.toLowerCase();
+			if (cmd === "visualizer" || cmd === "blob-office" || cmd === "/visualizer" || cmd === "/blob-office") {
+				log("info", `Slash command triggered: /${command}`);
+				await openViewer(agents.size);
+			}
+		},
+
+		// Add custom tool to open the visualizer (optional - for LLM-driven access)
+		tool: {
+			blob_office: tool({
+				description: "Open the Blob Office pixel agent visualizer",
+				args: {},
+				async execute(_args, _context) {
+					await openViewer(agents.size);
+					return `Opened Blob Office visualizer. ${agents.size} active agents.`;
+				},
+			}),
+		},
 	};
 };
+
+// Server plugin export - handles WebSocket server, events, and session tracking
+export default {
+	id: "blob-office",
+	server: BlobOfficePlugin,
+};
+
