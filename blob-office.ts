@@ -1,17 +1,19 @@
 /**
  * blob-office.ts
- * Global OpenCode plugin — drop into ~/.config/opencode/plugins/
+ * Global OpenCode plugin - drop into ~/.config/opencode/plugins/
  *
- * Starts a WebSocket server on ws://localhost:2727 and broadcasts
- * live session state to the blob-office viewer (blob-office.html).
+ * OpenCode V2 plugin API: default-exports a definition with an `id` and
+ * `setup(ctx)`. Registers a WebSocket server on ws://localhost:2727 and
+ * broadcasts live session state to the blob-office viewer (blob-office.html).
  *
  * Install:
  *   cp blob-office.ts ~/.config/opencode/plugins/
- *   cp package.json   ~/.config/opencode/plugins/
- *   # OpenCode runs `bun install` automatically at next startup
+ *   cp blob-office.html ~/.config/opencode/plugins/
+ *   restart OpenCode
+ *
+ * Windows notes: Bun does not always define HOME (falls back to USERPROFILE)
+ * and system notifications are macOS-only.
  */
-
-import type { Plugin } from "@opencode-ai/plugin";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -34,16 +36,16 @@ interface BlobOfficeSettings {
 interface AgentState {
 	id: string;
 	parentID: string | null; // ID of parent agent if this is a subagent
-	folder: string; // basename of project directory
-	folderFull: string; // full path
-	title: string | null; // session title
+	folder: string;
+	folderFull: string;
+	title: string | null;
 	status: AgentStatus;
 	tool: string | null; // current tool being executed
-	message: string | null; // last speech bubble text
-	since: number; // timestamp of last status change (ms)
-	color: number; // hue 0–360, derived from session id
+	message: string | null; // speech bubble text
+	since: number; // last update timestamp
+	color: number; // hue 0-360
 	idleSince: number | null; // timestamp when subagent went idle (for cleanup)
-	activityScale: number; // 1.0 = normal, up to 2.5 (based on files modified)
+	activityScale: number; // visual scale based on file activity
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -55,44 +57,63 @@ export function hueFromId(id: string): number {
 }
 
 export function folderName(path: string): string {
-	return path.split("/").filter(Boolean).pop() ?? path;
+	return path.split(/[/\\]/).filter(Boolean).pop() ?? path;
 }
 
+// V2 tool names: `bash` -> `shell`, `task` -> `subagent`, plus code-mode
+// `execute` and plugin/MCP tools (e.g. browser_*).
 export const TOOL_STATUS: Record<string, AgentStatus> = {
 	write: "editing",
 	edit: "editing",
+	patch: "editing",
 	multiedit: "editing",
+	todowrite: "editing",
 	read: "reading",
 	glob: "reading",
 	grep: "reading",
+	list: "reading",
 	ls: "reading",
-	bash: "running",
 	webfetch: "reading",
 	websearch: "reading",
-	task: "thinking",
 	todoread: "reading",
-	todowrite: "editing",
+	skill: "reading",
+	shell: "running",
+	bash: "running",
+	execute: "running",
+	task: "thinking",
+	subagent: "thinking",
 };
 
 export function toolStatus(tool: string): AgentStatus {
-	return TOOL_STATUS[tool.toLowerCase()] ?? "thinking";
+	// Plugin and MCP tools are namespaced (browser_evaluate, mcp__*, ...)
+	// so match on the prefix too.
+	if (TOOL_STATUS[tool.toLowerCase()]) return TOOL_STATUS[tool.toLowerCase()];
+	if (/^(browser|chrome)/i.test(tool)) return "running";
+	if (/^(mcp__|mcp\.)/i.test(tool)) return "running";
+	return "thinking";
 }
 
 export function toolLabel(tool: string): string {
 	const labels: Record<string, string> = {
 		write: "✏️ writing",
 		edit: "✏️ editing",
+		patch: "✏️ editing",
 		multiedit: "✏️ editing",
 		read: "📖 reading",
 		glob: "🔍 searching",
 		grep: "🔍 searching",
+		list: "📂 listing",
 		ls: "📂 listing",
+		shell: "💻 running",
 		bash: "💻 running",
+		execute: "💻 running",
 		webfetch: "🌐 fetching",
 		websearch: "🌐 searching",
 		task: "🤖 spawning",
+		subagent: "🤖 spawning",
 		todoread: "📋 todos",
 		todowrite: "📋 updating",
+		skill: "📚 loading skill",
 	};
 	return labels[tool.toLowerCase()] ?? `🔧 ${tool}`;
 }
@@ -126,657 +147,615 @@ export function recordFileActivity(agentId: string, filePath: string): void {
 
 export function getActivityScale(agentId: string): number {
 	const files = agentFileActivity.get(agentId)?.size ?? 0;
-	// Logarithmic scale: 1 file → 1.0, 10 files → 1.15, 100 files → 1.3, 1000 files → 1.45
+	// Logarithmic scale: 1 file -> 1.0, 10 files -> 1.15, 100 files -> 1.3
 	const scale = 1.0 + Math.log10(Math.max(files, 1)) * 0.15;
 	return Math.min(Math.max(scale, 1.0), 2.5);
 }
 
 // ─── Plugin ───────────────────────────────────────────────────────────────────
 
-export const BlobOfficePlugin: Plugin = async ({ directory, client, $ }) => {
-	// Clear any stale activity data from previous sessions
-	agentFileActivity.clear();
+export default {
+	id: "blob-office",
 
-	const PORT = 2727;
-	const agents = new Map<string, AgentState>();
-	const clients = new Set<globalThis.WebSocket>();
-	const disposedAgents = new Set<string>();
+	async setup(ctx: any) {
+		// Clear any stale activity data from previous sessions
+		agentFileActivity.clear();
 
-	// Helper for structured logging (goes to OpenCode log, not terminal)
-	const log = async (
-		level: "debug" | "info" | "warn" | "error",
-		msg: string,
-	) => {
-		try {
-			await client?.app?.log?.({
-				body: {
-					service: "blob-office",
-					level,
-					message: msg,
-				},
-			});
-		} catch {
-			// Fallback to console if logging fails
-		}
-	};
+		const directory: string =
+			ctx?.location?.directory ?? process.cwd();
+		const PORT = 2727;
+		const agents = new Map<string, AgentState>();
+		const clients = new Set<globalThis.WebSocket>();
+		const disposedAgents = new Set<string>();
 
-	// Helper to show system notification on macOS
-	const notify = async (title: string, message: string) => {
-		try {
-			await $`osascript -e 'display notification "${message}" with title "${title}"'`;
-		} catch {
-			// Silently fail if notifications aren't available
-		}
-	};
-
-	// ── Broadcast to all connected clients ──────────────────────────────────
-
-	// WebSocket connection to central server (for non-server instances)
-	let syncWs: WebSocket | null = null;
-
-	// Debounce mechanism to prevent rapid updates
-	let broadcastTimeout: ReturnType<typeof setTimeout> | null = null;
-	const BROADCAST_DEBOUNCE_MS = 50;
-
-	function broadcast() {
-		// Clear existing timeout to debounce rapid calls
-		if (broadcastTimeout) {
-			clearTimeout(broadcastTimeout);
-		}
-
-		broadcastTimeout = setTimeout(() => {
-			broadcastTimeout = null;
-			const msg = JSON.stringify({
-				type: "snapshot",
-				agents: [...agents.values()],
-			});
-
-			// Send to all connected viewer clients
-			for (const ws of clients) {
-				if (ws.readyState === WebSocket.OPEN) {
-					ws.send(msg);
-				}
+		// Helper for logging. V2 exposes ctx.app, but app.log is not guaranteed
+		// on every release, so always echo to the server console as a fallback.
+		const log = async (
+			level: "debug" | "info" | "warn" | "error",
+			msg: string,
+		) => {
+			const line = `[blob-office] ${msg}`;
+			try {
+				// eslint-disable-next-line no-console
+				console.log(line);
+			} catch {
+				/* ignore */
 			}
+			try {
+				await ctx?.app?.log?.({
+					body: { service: "blob-office", level, message: msg },
+				});
+			} catch {
+				/* logging unavailable on this release */
+			}
+		};
 
-			// If we're a client instance, send incremental updates instead of full snapshot
-			// to avoid overwriting other instances' agents
-			if (syncWs && syncWs.readyState === WebSocket.OPEN) {
-				const updateMsg = JSON.stringify({
-					type: "agent_update",
+		// Helper to show system notification (macOS only; no-op elsewhere)
+		const notify = async (title: string, message: string) => {
+			if (process.platform !== "darwin") return;
+			try {
+				const proc = Bun.spawn(
+					["osascript", "-e", `display notification "${message}" with title "${title}"`],
+					{ stdout: "ignore", stderr: "ignore" },
+				);
+				await proc.exited;
+			} catch {
+				// Silently fail if notifications aren't available
+			}
+		};
+
+		// ── Broadcast ────────────────────────────────────────────────────────────
+
+		let syncWs: WebSocket | null = null;
+		let broadcastTimeout: ReturnType<typeof setTimeout> | null = null;
+		const BROADCAST_DEBOUNCE_MS = 50;
+
+		function broadcast() {
+			if (broadcastTimeout) clearTimeout(broadcastTimeout);
+
+			broadcastTimeout = setTimeout(() => {
+				broadcastTimeout = null;
+				const msg = JSON.stringify({
+					type: "snapshot",
 					agents: [...agents.values()],
 				});
-				syncWs.send(updateMsg);
-			}
-		}, BROADCAST_DEBOUNCE_MS);
-	}
 
-	function updateAgent(id: string, patch: Partial<AgentState>) {
-		const a = agents.get(id);
-		if (!a) return;
-		Object.assign(a, patch, { since: Date.now() });
-		// Remove from disposed set if agent receives an update (user resumed)
-		if (disposedAgents.has(id)) {
-			disposedAgents.delete(id);
-		}
-		broadcast();
-	}
-
-	// ── Auto-open browser ─────────────────────────────────────────────────────
-
-	let browserOpened = false;
-
-	// Marker file to track if viewer was already opened today
-	const MARKER_FILE = `${process.env.HOME}/.config/opencode/plugins/.viewer-opened-today`;
-	// Settings file for user preferences
-	const SETTINGS_FILE = `${process.env.HOME}/.config/opencode/plugins/blob-office.settings.json`;
-
-	// Default settings (user can override via settings file)
-	const DEFAULT_SETTINGS: BlobOfficeSettings = {
-		viewerOpenFrequency: "once-per-day",
-	};
-
-	// Load settings from file
-	async function loadSettings(): Promise<BlobOfficeSettings> {
-		try {
-			const file = Bun.file(SETTINGS_FILE);
-			if (!await file.exists()) return DEFAULT_SETTINGS;
-			const content = await file.json() as Partial<BlobOfficeSettings>;
-			return { ...DEFAULT_SETTINGS, ...content };
-		} catch {
-			return DEFAULT_SETTINGS;
-		}
-	}
-
-	// Track if server was already running (for sync purposes)
-	let serverWasAlreadyRunning = false;
-
-	// Get today's date as YYYY-MM-DD string
-	function getTodayDate(): string {
-		return new Date().toISOString().split('T')[0];
-	}
-
-	// Check if viewer was already opened today
-	async function wasOpenedToday(): Promise<boolean> {
-		try {
-			const file = Bun.file(MARKER_FILE);
-			if (!await file.exists()) return false;
-			const content = await file.text();
-			return content.trim() === getTodayDate();
-		} catch {
-			return false;
-		}
-	}
-
-	// Update marker file with today's date
-	async function markOpenedToday(): Promise<void> {
-		try {
-			await Bun.write(MARKER_FILE, getTodayDate());
-		} catch {
-			// Ignore - non-critical
-		}
-	}
-
-	async function openViewer(agentCount: number) {
-		// Check if a viewer is already open (connected clients)
-		if (clients.size > 0) {
-			log("info", `Viewer already open (${clients.size} clients connected), skipping`);
-			return;
-		}
-
-		// Load user settings
-		const settings = await loadSettings();
-
-		// If this is the first agent ever, open viewer
-		const isFirstAgent = agentCount === 0;
-
-		// Check if we should skip opening based on settings
-		if (!isFirstAgent) {
-			if (settings.viewerOpenFrequency === "once-per-day") {
-				// Only open once per day
-				const openedToday = await wasOpenedToday();
-				if (openedToday) {
-					// Already opened today, skip
-					return;
+				for (const ws of clients) {
+					if (ws.readyState === WebSocket.OPEN) ws.send(msg);
 				}
+
+				// Client instances send incremental updates so they do not
+				// overwrite the server instance's agents
+				if (syncWs && syncWs.readyState === WebSocket.OPEN) {
+					syncWs.send(
+						JSON.stringify({
+							type: "agent_update",
+							agents: [...agents.values()],
+						}),
+					);
+				}
+			}, BROADCAST_DEBOUNCE_MS);
+		}
+
+		function updateAgent(id: string, patch: Partial<AgentState>) {
+			const a = agents.get(id);
+			if (!a) return;
+			Object.assign(a, patch, { since: Date.now() });
+			disposedAgents.delete(id);
+			broadcast();
+		}
+
+		function addAgent(input: {
+			id: string;
+			parentID?: string | null;
+			title?: string | null;
+			folder?: string;
+			folderFull?: string;
+			message?: string | null;
+			status?: AgentStatus;
+		}): boolean {
+			const { id } = input;
+			if (agents.has(id)) return false;
+			agents.set(id, {
+				id,
+				parentID: input.parentID ?? null,
+				folder: input.folder ?? folderName(directory),
+				folderFull: input.folderFull ?? directory,
+				title: input.title ?? null,
+				status: input.status ?? "idle",
+				tool: null,
+				message: input.message ?? "✨ created",
+				since: Date.now(),
+				color: hueFromId(id),
+				idleSince: null,
+				activityScale: 1.0,
+			});
+			return true;
+		}
+
+		// ── Viewer auto-open ─────────────────────────────────────────────────────
+
+		let browserOpened = false;
+
+		// Windows: Bun does not always define HOME, fall back to USERPROFILE
+		const HOME_DIR = process.env.HOME || process.env.USERPROFILE || ".";
+		const PLUGIN_DIR = `${HOME_DIR}/.config/opencode/plugins`;
+		const MARKER_FILE = `${PLUGIN_DIR}/.viewer-opened-today`;
+		const SETTINGS_FILE = `${PLUGIN_DIR}/blob-office.settings.json`;
+
+		const DEFAULT_SETTINGS: BlobOfficeSettings = {
+			viewerOpenFrequency: "once-per-day",
+		};
+
+		async function loadSettings(): Promise<BlobOfficeSettings> {
+			try {
+				const file = Bun.file(SETTINGS_FILE);
+				if (!(await file.exists())) return DEFAULT_SETTINGS;
+				const content = (await file.json()) as Partial<BlobOfficeSettings>;
+				return { ...DEFAULT_SETTINGS, ...content };
+			} catch {
+				return DEFAULT_SETTINGS;
 			}
-			// If set to "every-session", we always open (no check needed)
 		}
 
-		// Find the viewer — look next to the plugin file, then home
-		const candidates = [
-			`${process.env.HOME}/.config/opencode/plugins/blob-office.html`,
-			`${process.env.HOME}/blob-office/index.html`,
-		];
-		const viewer = candidates[0]; // default install location
+		let serverWasAlreadyRunning = false;
 
-		const platform = process.platform;
-		const cmd =
-			platform === "darwin"
-				? ["open", viewer]
-				: platform === "win32"
-					? ["cmd", "/c", "start", "", viewer]
-					: ["xdg-open", viewer];
-
-		try {
-			const proc = Bun.spawn(cmd, { stdout: "ignore", stderr: "ignore" });
-			await proc.exited;
-			// Mark that viewer was opened today (only needed for once-per-day mode)
-			await markOpenedToday();
-			log("info", "Viewer opened successfully");
-		} catch {
-			log("info", `Open viewer manually: ${viewer}`);
+		function getTodayDate(): string {
+			return new Date().toISOString().split("T")[0];
 		}
-	}
 
-	// ── Bun WebSocket Server ─────────────────────────────────────────────────
+		async function wasOpenedToday(): Promise<boolean> {
+			try {
+				const file = Bun.file(MARKER_FILE);
+				if (!(await file.exists())) return false;
+				return (await file.text()).trim() === getTodayDate();
+			} catch {
+				return false;
+			}
+		}
 
-	// Track WebSocket connections using Bun's native WebSocket
-	let wss: Awaited<ReturnType<typeof Bun.serve>> | null = null;
-	let isServerInstance = false; // true if this instance started the server
-	let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
-	let idleCleanupInterval: ReturnType<typeof setInterval> | null = null;
+		async function markOpenedToday(): Promise<void> {
+			try {
+				await Bun.write(MARKER_FILE, getTodayDate());
+			} catch {
+				// Ignore - non-critical
+			}
+		}
 
-	// Start heartbeat to send periodic pings and prevent connection timeouts
-	function startHeartbeat() {
-		if (heartbeatInterval) return;
-		heartbeatInterval = setInterval(() => {
-			const heartbeatMsg = JSON.stringify({
-				type: "heartbeat",
-				timestamp: Date.now(),
-			});
-			// Also broadcast current state periodically to keep clients in sync
-			const snapshotMsg = JSON.stringify({
-				type: "snapshot",
-				agents: [...agents.values()],
-			});
-			for (const ws of clients) {
-				if (ws.readyState === WebSocket.OPEN) {
-					// Send heartbeat
+		async function openViewer(agentCount: number) {
+			if (browserOpened) return;
+			if (clients.size > 0) {
+				await log("info", `Viewer already open (${clients.size} clients), skipping`);
+				return;
+			}
+
+			const settings = await loadSettings();
+			const isFirstAgent = agentCount === 0;
+
+			if (!isFirstAgent && settings.viewerOpenFrequency === "once-per-day") {
+				if (await wasOpenedToday()) return;
+			}
+
+			const viewer = `${PLUGIN_DIR}/blob-office.html`;
+			if (!(await Bun.file(viewer).exists())) {
+				await log("warn", `Viewer missing at ${viewer} - copy blob-office.html there`);
+				return;
+			}
+
+			const cmd =
+				process.platform === "darwin"
+					? ["open", viewer]
+					: process.platform === "win32"
+						? ["cmd", "/c", "start", "", viewer]
+						: ["xdg-open", viewer];
+
+			try {
+				const proc = Bun.spawn(cmd, { stdout: "ignore", stderr: "ignore" });
+				await proc.exited;
+				browserOpened = true;
+				await markOpenedToday();
+				await log("info", "Viewer opened successfully");
+			} catch {
+				await log("info", `Open viewer manually: ${viewer}`);
+			}
+		}
+
+		// ── WebSocket server ─────────────────────────────────────────────────────
+
+		let wss: { stop: (closeActiveConnections?: boolean) => void } | null = null;
+		let isServerInstance = false;
+		let heartbeatInterval: ReturnType<typeof setInterval> | null = null;
+		let idleCleanupInterval: ReturnType<typeof setInterval> | null = null;
+
+		function startHeartbeat() {
+			if (heartbeatInterval) return;
+			heartbeatInterval = setInterval(() => {
+				const heartbeatMsg = JSON.stringify({
+					type: "heartbeat",
+					timestamp: Date.now(),
+				});
+				const snapshotMsg = JSON.stringify({
+					type: "snapshot",
+					agents: [...agents.values()],
+				});
+				for (const ws of clients) {
+					if (ws.readyState !== WebSocket.OPEN) continue;
 					ws.send(heartbeatMsg);
-					// Also send current state to ensure clients stay synced
 					ws.send(snapshotMsg);
 				}
-			}
-		}, 25000); // Heartbeat every 25 seconds
-	}
+			}, 25000);
+		}
 
-	// Start cleanup interval to remove idle subagents after 3 seconds and disposed agents after 10s
-	function startIdleCleanup() {
-		if (idleCleanupInterval) return;
-		idleCleanupInterval = setInterval(() => {
-			const now = Date.now();
-			const toDelete: string[] = [];
+		function startIdleCleanup() {
+			if (idleCleanupInterval) return;
+			idleCleanupInterval = setInterval(() => {
+				const now = Date.now();
+				const toDelete: string[] = [];
 
-			for (const [id, agent] of agents) {
-				// Cleanup disposed main agents (user exited) after 10 seconds of inactivity
-				if (!agent.parentID && disposedAgents.has(id)) {
-					const inactiveTime = now - agent.since;
-					if (inactiveTime > 10000) {
-						// 10 seconds
-						toDelete.push(id);
-						disposedAgents.delete(id);
+				for (const [id, agent] of agents) {
+					// Disposed main agents (user exited) after 10s of inactivity
+					if (!agent.parentID && disposedAgents.has(id)) {
+						if (now - agent.since > 10000) {
+							toDelete.push(id);
+							disposedAgents.delete(id);
+						}
+					}
+					// Idle subagents after 3s
+					if (agent.parentID && agent.status === "idle" && agent.idleSince) {
+						if (now - agent.idleSince > 3000) toDelete.push(id);
 					}
 				}
 
-				// Cleanup subagents (have parentID) that have been idle for 3+ seconds
-				if (agent.parentID && agent.status === "idle" && agent.idleSince) {
-					const idleTime = now - agent.idleSince;
-					if (idleTime > 3000) {
-						// 3 seconds
-						toDelete.push(id);
+				if (toDelete.length > 0) {
+					for (const id of toDelete) {
+						agents.delete(id);
+						agentFileActivity.delete(id);
 					}
+					broadcast();
 				}
-			}
+			}, 1000);
+		}
 
-			if (toDelete.length > 0) {
-				for (const id of toDelete) {
-					agents.delete(id);
-					agentFileActivity.delete(id);
-				}
-				broadcast();
-			}
-		}, 1000); // Check every second
-	}
-
-	try {
-		wss = Bun.serve({
-			port: PORT,
-			fetch(req, server) {
-				// Handle WebSocket upgrade
-				const url = new URL(req.url);
-				if (url.pathname === "/ws" || url.pathname === "/") {
-					const success = server.upgrade(req, { data: {} });
-					if (success) return undefined;
-					return new Response("WebSocket upgrade failed", { status: 400 });
-				}
-				return new Response("Not Found", { status: 404 });
-			},
-			websocket: {
-				open(ws) {
-					log("info", "Client connected");
-					notify("Blob Office", "Viewer connected");
-					clients.add(ws as unknown as globalThis.WebSocket);
-					// Send current state immediately on connect
-					ws.send(
-						JSON.stringify({ type: "snapshot", agents: [...agents.values()] }),
-					);
+		try {
+			wss = Bun.serve({
+				port: PORT,
+				fetch(req: Request, server: any) {
+					const url = new URL(req.url);
+					if (url.pathname === "/ws" || url.pathname === "/") {
+						const success = server.upgrade(req, { data: {} });
+						if (success) return undefined;
+						return new Response("WebSocket upgrade failed", { status: 400 });
+					}
+					return new Response("Not Found", { status: 404 });
 				},
-				close(ws) {
-					log("info", "Client disconnected");
-					clients.delete(ws as unknown as globalThis.WebSocket);
-				},
-				message(ws, message) {
-					// Handle incoming sync messages from other plugin instances
-					try {
-						const msg = JSON.parse(message.toString());
-						if (
-							msg.type === "agent_update" ||
-							msg.type === "full_sync" ||
-							msg.type === "snapshot"
-						) {
-							// Merge incoming agents from client instances - ADD only, don't remove
-							for (const agent of msg.agents) {
-								if (!agents.has(agent.id)) {
-									agents.set(agent.id, agent);
-								} else {
-									// Update existing agent with newer data
-									const existing = agents.get(agent.id)!;
-									// Only update if the incoming agent has a newer 'since' timestamp
-									if (agent.since >= existing.since) {
+				websocket: {
+					open(ws: any) {
+						void log("info", "Client connected");
+						void notify("Blob Office", "Viewer connected");
+						clients.add(ws as globalThis.WebSocket);
+						ws.send(
+							JSON.stringify({
+								type: "snapshot",
+								agents: [...agents.values()],
+							}),
+						);
+					},
+					close(ws: any) {
+						void log("info", "Client disconnected");
+						clients.delete(ws as globalThis.WebSocket);
+					},
+					message(ws: any, message: any) {
+						// Merge state forwarded by other plugin instances
+						try {
+							const msg = JSON.parse(message.toString());
+							if (
+								msg.type === "agent_update" ||
+								msg.type === "full_sync" ||
+								msg.type === "snapshot"
+							) {
+								for (const agent of msg.agents) {
+									const existing = agents.get(agent.id);
+									if (!existing) {
+										agents.set(agent.id, agent);
+									} else if (agent.since >= existing.since) {
 										Object.assign(existing, agent);
 									}
 								}
+								void log(
+									"info",
+									`Merged ${msg.agents.length} agents from client, total: ${agents.size}`,
+								);
+								broadcast();
 							}
-							log(
-								"info",
-								`Merged ${msg.agents.length} agents from client, total: ${agents.size}`,
-							);
-							// Re-broadcast to all connected viewers
-							broadcast();
+						} catch {
+							// Ignore parse errors
+						}
+					},
+				},
+			});
+			isServerInstance = true;
+			startHeartbeat();
+			startIdleCleanup();
+			void log("info", `WebSocket server running on ws://localhost:${PORT}`);
+		} catch (err) {
+			if ((err as NodeJS.ErrnoException)?.code === "EADDRINUSE") {
+				void log(
+					"warn",
+					`Port ${PORT} already in use - connecting to existing server as client`,
+				);
+				serverWasAlreadyRunning = true;
+				syncWs = new WebSocket(`ws://localhost:${PORT}`);
+
+				syncWs.onopen = () => {
+					void log("info", "Connected to existing Blob Office server as client");
+					if (agents.size > 0) {
+						syncWs?.send(
+							JSON.stringify({ type: "full_sync", agents: [...agents.values()] }),
+						);
+					}
+				};
+
+				syncWs.onmessage = (ev) => {
+					try {
+						const msg = JSON.parse(ev.data);
+						if (msg.type === "snapshot") {
+							for (const agent of msg.agents) {
+								if (!agents.has(agent.id)) agents.set(agent.id, agent);
+							}
 						}
 					} catch {
-						// Ignore parse errors
+						/* ignore */
 					}
-				},
-			},
-		});
-		isServerInstance = true;
-		startHeartbeat();
-		startIdleCleanup();
-		log("info", `WebSocket server running on ws://localhost:${PORT}`);
-	} catch (err) {
-		if ((err as NodeJS.ErrnoException).code === "EADDRINUSE") {
-			log(
-				"warn",
-				"Port 2727 already in use — connecting to existing server as client",
-			);
-			serverWasAlreadyRunning = true;
-			// Connect to existing server as a client to receive broadcasts
-			// and sync agent state
-			const wsUrl = `ws://localhost:${PORT}`;
-			syncWs = new WebSocket(wsUrl);
+				};
 
-			syncWs.onopen = () => {
-				log("info", "Connected to existing Blob Office server as client");
-				// Send full sync of our local agents to the server
-				// This ensures agents from all instances are visible
-				if (agents.size > 0) {
-					const syncMsg = JSON.stringify({
-						type: "full_sync",
-						agents: [...agents.values()],
-					});
-					syncWs?.send(syncMsg);
-					log("info", `Sent ${agents.size} agents to server during sync`);
-				} else {
-					log("info", "No local agents to sync to server");
-				}
-			};
+				syncWs.onerror = () => {
+					void log("warn", "Error connecting to existing server");
+				};
+			} else {
+				void log("error", `Failed to start WebSocket server: ${err}`);
+			}
+		}
 
-			syncWs.onmessage = (ev) => {
-				try {
-					const msg = JSON.parse(ev.data);
-					// When we receive a snapshot from the server, merge agents
-					if (msg.type === "snapshot") {
-						// Merge server's agents with our local agents
-						// This keeps our local state in sync
-						for (const agent of msg.agents) {
-							if (!agents.has(agent.id)) {
-								// New agent from another instance - add it
-								agents.set(agent.id, agent);
-							} else {
-								// Update existing agent with server data
-								const existing = agents.get(agent.id)!;
-								Object.assign(existing, agent);
+		// ── Tool hooks ───────────────────────────────────────────────────────────
+
+		// V1: "tool.execute.before": async (input, output) => {}
+		// V2: ctx.tool.hook("execute.before", event => {}) - one mutable event
+		await ctx.tool
+			.hook("execute.before", (event: any) => {
+				const sessionID = event.sessionID as string | undefined;
+				const tool = (event.tool as string) ?? "";
+				if (!sessionID || !tool) return;
+
+				if (["write", "edit", "patch", "multiedit"].includes(tool.toLowerCase())) {
+					try {
+						const filePath = event.input?.filePath ?? event.input?.path;
+						if (filePath && !isIgnored(filePath)) {
+							recordFileActivity(sessionID, filePath);
+							const agent = agents.get(sessionID);
+							if (agent) {
+								agent.activityScale = getActivityScale(sessionID);
+								broadcast();
 							}
 						}
+					} catch {
+						// ignore malformed input
 					}
-				} catch {
-					/* ignore parse errors */
 				}
-			};
 
-			syncWs.onerror = () => {
-				log("warn", "Error connecting to existing server");
-			};
-		} else {
-			log("error", `Failed to start WebSocket server: ${err}`);
-		}
-	}
+				ensureAgent(sessionID, {
+					status: toolStatus(tool),
+					tool,
+					message: toolLabel(tool),
+				});
+			})
+			.catch(() => {});
 
-	// ── Cleanup on process exit ───────────────────────────────────────────────
+		await ctx.tool
+			.hook("execute.after", (event: any) => {
+				ensureAgent(event.sessionID, {
+					status: "thinking",
+					tool: null,
+					message: "🧠 thinking…",
+				});
+			})
+			.catch(() => {});
 
-	async function cleanup(signal: string) {
-		log("info", `Received ${signal}, shutting down...`);
+		// ── Events ───────────────────────────────────────────────────────────────
 
-		// Clear any pending broadcast
-		if (broadcastTimeout) {
-			clearTimeout(broadcastTimeout);
-			broadcastTimeout = null;
-		}
+		// V1: returned "event" hook. V2: subscribe to the public event stream and
+		// abort from the cleanup function returned by setup().
+		const controller = new AbortController();
 
-		// Close sync connection to central server
-		if (syncWs) {
-			if (syncWs.readyState === WebSocket.OPEN) {
-				syncWs.close(1001, "Client shutting down");
-			}
-			syncWs = null;
-		}
-
-		// Notify all clients that server is closing
-		const closeMsg = JSON.stringify({ type: "serverclosing", reason: signal });
-		for (const ws of clients) {
-			if (ws.readyState === WebSocket.OPEN) {
-				ws.send(closeMsg);
-				ws.close(1001, "Server shutting down");
-			}
-		}
-		clients.clear();
-
-		// Stop the WebSocket server
-		if (wss) {
-			wss.stop();
-			wss = null;
-		}
-
-		// Stop intervals
-		if (heartbeatInterval) {
-			clearInterval(heartbeatInterval);
-			heartbeatInterval = null;
-		}
-		if (idleCleanupInterval) {
-			clearInterval(idleCleanupInterval);
-			idleCleanupInterval = null;
-		}
-
-		log("info", "Cleanup complete");
-	}
-
-	// Handle process exit signals
-	process.on("SIGINT", () => cleanup("SIGINT"));
-	process.on("SIGTERM", () => cleanup("SIGTERM"));
-
-	// ── Hooks ─────────────────────────────────────────────────────────────────
-
-	return {
-		// Tool about to execute — most interesting hook
-		// Note: receives (input, output) as two parameters
-		"tool.execute.before": async (input, output) => {
-			const { sessionID, tool } = input as {
-				sessionID: string;
-				tool: string;
-				callID: string;
-			};
-
-			// Track file modifications for activity scaling
-			if (["write", "edit", "multiedit"].includes(tool.toLowerCase())) {
-				try {
-					const toolInput = input as any;
-					const filePath = toolInput.filePath || toolInput.path;
-
-					if (filePath && !isIgnored(filePath)) {
-						recordFileActivity(sessionID, filePath);
-
-						if (agents.has(sessionID)) {
-							const agent = agents.get(sessionID)!;
-							agent.activityScale = getActivityScale(sessionID);
-							broadcast();
-						}
-					}
-				} catch {
-					// Silently fail if we can't extract file path
+		void (async () => {
+			try {
+				for await (const event of ctx.event.subscribe({ signal: controller.signal })) {
+					handleEvent(event as any);
+				}
+			} catch (err) {
+				if (!controller.signal.aborted) {
+					void log("error", `Event subscription ended: ${err}`);
 				}
 			}
+		})();
 
-			if (!sessionID || !agents.has(sessionID)) return;
-			updateAgent(sessionID, {
-				status: toolStatus(tool),
-				tool: tool,
-				message: toolLabel(tool),
-			});
-		},
+		function handleEvent(event: any) {
+			// V2 events carry the payload on `data` (V1 used `properties`)
+			const data = (event?.data ?? {}) as Record<string, any>;
+			const type = event?.type as string;
 
-		// Tool finished
-		"tool.execute.after": async (input) => {
-			const { sessionID } = input as { sessionID: string; tool: string };
-			if (!sessionID || !agents.has(sessionID)) return;
-			updateAgent(sessionID, {
-				status: "thinking",
-				tool: null,
-				message: "🧠 thinking…",
-			});
-		},
-
-		// Unified event hook - handles all session events
-		event: async ({ event }) => {
-			const eventProps = event.properties as Record<string, unknown>;
-
-			switch (event.type) {
-				// New session created
+			switch (type) {
+				// data: { sessionID, projectID, location, subpath?, parentID?,
+				//         slug, title?, agent?, ... }
 				case "session.created": {
-					const sessionInfo = eventProps.info as {
-						id: string;
-						parentID?: string;
-						title: string;
-					};
-					const id = sessionInfo.id;
-					const parentID = sessionInfo.parentID;
-					const title = sessionInfo.title;
-					const isSubAgent = !!parentID;
-
-					// Check if agent already exists before adding
-					const agentAlreadyExists = agents.has(id);
-
-					// Log for debugging - shows session info and agent count
-					log(
-						"info",
-						`Session created: ${id.substring(0, 8)}..., parentID: ${parentID ? parentID.substring(0, 8) + "..." : "none"}, already exists: ${agentAlreadyExists}, agents count: ${agents.size}`,
-					);
-
-					agents.set(id, {
+					const id = data.sessionID as string;
+					if (!id || agents.has(id)) return;
+					const isNew = addAgent({
 						id,
-						parentID: parentID ?? null,
-						folder: folderName(directory),
-						folderFull: directory,
-						title: title ?? null,
-						status: "idle",
-						tool: null,
-						message: "✨ created",
-						since: Date.now(),
-						color: hueFromId(id),
-						idleSince: null,
-						activityScale: 1.0,
+						parentID: data.parentID ?? null,
+						title: data.title ?? null,
+						folder: folderName(data.location?.directory ?? directory),
+						folderFull: data.location?.directory ?? directory,
 					});
-
-					log("info", `Agent added, total agents: ${agents.size}`);
-					broadcast();
-					// Pass count BEFORE this agent was added to determine if it's first
-					openViewer(agents.size - 1);
-					break;
-				}
-
-				// Session updated (includes when session is resumed/focused)
-				case "session.updated": {
-					const sessionInfo = eventProps.info as {
-						id: string;
-						title?: string;
-					};
-					const id = sessionInfo.id;
-					const title = sessionInfo.title;
-
-					const agentExists = agents.has(id);
-					log(
-						"info",
-						`Session updated: ${id.substring(0, 8)}..., agent exists: ${agentExists}, agents count: ${agents.size}`,
-					);
-
-					// If agent doesn't exist yet, create it (edge case - session resumed but not created in this instance)
-					if (!agents.has(id)) {
-						const parentID = (eventProps.parentID as string) ?? null;
-						agents.set(id, {
-							id,
-							parentID: parentID,
-							folder: folderName(directory),
-							folderFull: directory,
-							title: title ?? null,
-							status: "idle",
-							tool: null,
-							message: "↩️ resumed",
-							since: Date.now(),
-							color: hueFromId(id),
-							idleSince: null,
-							activityScale: 1.0,
-						});
-						log(
+					if (isNew) {
+						void log(
 							"info",
-							`Agent added via session.updated (${id.substring(0, 8)}...), parentID: ${parentID ? parentID.substring(0, 8) + "..." : "none"}, total agents: ${agents.size}`,
+							`Session created: ${id.substring(0, 8)}... parent: ${data.parentID ? data.parentID.substring(0, 8) : "none"}, agents: ${agents.size}`,
 						);
-					} else {
-						// Agent already exists - check if it was just created (session.created already ran)
-						// If message is "✨ created", don't override with "resumed"
-						const existing = agents.get(id)!;
-						const isNewSession = existing.message === "✨ created";
-
-						// Active states that should NOT be overwritten with "resumed"
-						const activeStates: AgentStatus[] = [
-							"thinking",
-							"editing",
-							"reading",
-							"running",
-							"waiting",
-						];
-						const isActive = activeStates.includes(existing.status);
-
-						// Sub-agents should never show "resumed" - they just show status indicators
-						const isSubAgent = existing.parentID !== null;
-
-						// Build update patch based on current state
-						const updatePatch: Partial<AgentState> = {};
-
-						if (isActive) {
-							// Preserve active state and current message - don't show "resumed"
-							// The agent is doing something (thinking, editing, etc.), keep showing that
-						} else if (isNewSession || isSubAgent) {
-							// New sessions and sub-agents don't show "resumed", just stay in their current idle/waiting state
-							updatePatch.status = "idle";
-							updatePatch.tool = null;
-							updatePatch.message = null;
-						} else {
-							// Only show "resumed" for truly resumed idle/waiting main agents
-							updatePatch.status = "idle";
-							updatePatch.tool = null;
-							updatePatch.message = "↩️ resumed";
-						}
-
-						if (title) {
-							updatePatch.title = title;
-						}
-
-						// Only update if we have changes to make
-						if (Object.keys(updatePatch).length > 0) {
-							updateAgent(id, updatePatch);
-						}
+						broadcast();
+						void openViewer(agents.size - 1);
 					}
-					broadcast();
-					// Pass count BEFORE this update to determine if it's first
-					openViewer(agents.size - 1);
 					break;
 				}
 
-				// Session deleted / closed
+				// data: { sessionID }
 				case "session.deleted": {
-					const deletedSessionInfo = eventProps.info as { id: string };
-					const id = deletedSessionInfo.id;
+					const id = data.sessionID as string;
+					if (!id) return;
 					agents.delete(id);
 					agentFileActivity.delete(id);
 					broadcast();
 					break;
 				}
 
-				// Session went idle (agent finished its turn)
+				// data: { sessionID }
 				case "session.idle": {
-					const sessionID = eventProps.sessionID as string;
+					const sessionID = data.sessionID as string;
+					if (!agents.has(sessionID)) return;
+					const isSubagent = agents.get(sessionID)!.parentID !== null;
+					updateAgent(sessionID, {
+						status: "idle",
+						tool: null,
+						message: isSubagent ? "💤 done" : "💤 waiting",
+						idleSince: isSubagent ? Date.now() : null,
+					});
+					break;
+				}
+
+				// data: { sessionID, status } - status includes "busy"
+				case "session.status": {
+					const sessionID = data.sessionID as string;
+					const status = String(data.status ?? "").toLowerCase();
+					if (!sessionID) return;
+					if (status === "busy" || status === "thinking" || status === "generating") {
+						ensureAgent(sessionID, { status: "thinking", message: "🧠 thinking…" });
+					}
+					break;
+				}
+
+				// data: { sessionID?, error }
+				case "session.error": {
+					ensureAgent(data.sessionID, { status: "error", message: "❌ error" });
+					break;
+				}
+
+				// data: { sessionID, title }
+				case "session.renamed": {
+					const sessionID = data.sessionID as string;
+					if (!sessionID) return;
+					if (!agents.has(sessionID)) {
+						addAgent({ id: sessionID, title: data.title ?? null });
+						broadcast();
+						void openViewer(agents.size - 1);
+						break;
+					}
+					updateAgent(sessionID, { title: data.title ?? null });
+					break;
+				}
+
+				// data: { sessionID, idle } - session was focused/resumed
+				case "session.viewed": {
+					const sessionID = data.sessionID as string;
+					const agent = sessionID ? agents.get(sessionID) : undefined;
+					if (!agent) return;
+					const activeStates: AgentStatus[] = [
+						"thinking",
+						"editing",
+						"reading",
+						"running",
+						"waiting",
+					];
+					if (activeStates.includes(agent.status)) break;
+					updateAgent(sessionID, {
+						status: "idle",
+						tool: null,
+						message: agent.parentID ? null : "↩️ resumed",
+					});
+					break;
+				}
+
+				// data: { sessionID, id, name } - tool name is known here
+				case "session.tool.input.started": {
+					const tool = (data.name as string) ?? "";
+					if (!tool) return;
+					ensureAgent(data.sessionID, {
+						status: toolStatus(tool),
+						tool,
+						message: toolLabel(tool),
+					});
+					break;
+				}
+
+				case "session.tool.success":
+				case "session.tool.failed": {
+					ensureAgent(data.sessionID, {
+						status: "thinking",
+						tool: null,
+						message: "🧠 thinking…",
+					});
+					break;
+				}
+
+				// data: { sessionID, ... } - model is producing output
+				case "session.reasoning.started":
+				case "session.text.started":
+				case "session.step.started": {
+					ensureAgent(data.sessionID, {
+						status: "thinking",
+						tool: null,
+						message: "🧠 thinking…",
+					});
+					break;
+				}
+
+				// data: Permission.Request = { id, sessionID, action, resource, ... }
+				case "permission.asked": {
+					ensureAgent(data.sessionID, {
+						status: "waiting",
+						message: "⚠️ needs permission",
+					});
+					break;
+				}
+
+				// data: { sessionID, requestID, reply }
+				case "permission.replied": {
+					const sessionID = data.sessionID as string;
 					if (!sessionID || !agents.has(sessionID)) return;
-					const agent = agents.get(sessionID)!;
+					updateAgent(sessionID, {
+						status: "thinking",
+						message: "🧠 thinking…",
+					});
+					break;
+				}
+
+				// data: { sessionID, agent, messageID, id, input }
+				case "session.execution.started": {
+					ensureAgent(data.sessionID, {
+						status: "thinking",
+						message: "🧠 thinking…",
+					});
+					break;
+				}
+
+				case "session.execution.failed": {
+					ensureAgent(data.sessionID, { status: "error", message: "❌ error" });
+					break;
+				}
+
+				case "session.execution.succeeded":
+				case "session.execution.interrupted": {
+					const sessionID = data.sessionID as string;
+					const agent = sessionID ? agents.get(sessionID) : undefined;
+					if (!agent) return;
 					const isSubagent = agent.parentID !== null;
 					updateAgent(sessionID, {
 						status: "idle",
@@ -787,83 +766,105 @@ export const BlobOfficePlugin: Plugin = async ({ directory, client, $ }) => {
 					break;
 				}
 
-				// Status updates (thinking, etc)
-				case "session.status": {
-					const sessionID = eventProps.sessionID as string;
-					const status = (eventProps.status as string).toLowerCase();
-					if (!sessionID || !agents.has(sessionID)) return;
-					if (status === "thinking" || status === "generating") {
-						updateAgent(sessionID, {
-							status: "thinking",
-							message: "🧠 thinking…",
-						});
-					}
-					break;
-				}
-
-				// Session error
-				case "session.error": {
-					const sessionID = eventProps.sessionID as string;
-					if (!sessionID || !agents.has(sessionID)) return;
-					updateAgent(sessionID, { status: "error", message: "❌ error" });
-					break;
-				}
-
-				// Message updated — grab last user-visible content for speech bubble
-				case "message.updated": {
-					const messageInfo = eventProps.info as {
-						id: string;
-						sessionID: string;
-						role: string;
-					};
-					const sessionID = messageInfo?.sessionID;
-					if (!sessionID || !agents.has(sessionID)) return;
-					// Only care about assistant messages
-					if (messageInfo?.role !== "assistant") return;
-					updateAgent(sessionID, {
-						status: "thinking",
-						message: "🧠 thinking…",
-					});
-					break;
-				}
-
-				// Permission needed — agent is blocked waiting for human
-				case "permission.updated": {
-					const sessionID = (eventProps as { sessionID: string }).sessionID;
-					if (!sessionID || !agents.has(sessionID)) return;
-					updateAgent(sessionID, {
-						status: "waiting",
-						message: "⚠️ needs permission",
-					});
-					break;
-				}
-
-				case "permission.replied": {
-					const sessionID = (eventProps as { sessionID: string }).sessionID;
-					if (!sessionID || !agents.has(sessionID)) return;
-					updateAgent(sessionID, {
-						status: "thinking",
-						message: "🧠 thinking…",
-					});
-					break;
-				}
-
-				// Server instance disposed - user exited (Ctrl-C or /exit)
 				case "server.instance.disposed": {
-					log(
-						"info",
-						`Instance disposed - marking ${agents.size} agents for removal after 10s inactivity`,
-					);
-					// Mark all current main agents as disposed
-					for (const id of agents.keys()) {
-						const agent = agents.get(id);
-						if (agent && !agent.parentID) {
-							disposedAgents.add(id);
-						}
+					// Keep the marker handling for older servers that still emit it
+					for (const [id, agent] of agents) {
+						if (agent && !agent.parentID) disposedAgents.add(id);
 					}
 					break;
 				}
 			}
-		},
-	};
+		}
+
+		// ── Lazy agent creation ───────────────────────────────────────────────────
+		// ctx.session has no list() in V2, so agents are created the first time
+		// any event mentions a session. That also covers sessions that already
+		// existed when the plugin loaded (the service is long-lived).
+		const titleLookups = new Set<string>();
+
+		async function hydrateTitle(sessionID: string) {
+			if (titleLookups.has(sessionID)) return;
+			titleLookups.add(sessionID);
+			try {
+				const res = await ctx.session?.get?.({ sessionID });
+				const info: any = (res as any)?.data ?? res;
+				const agent = agents.get(sessionID);
+				if (!agent || !info) return;
+				if (info.title && !agent.title) {
+					updateAgent(sessionID, { title: info.title });
+				}
+				if (info.parentID !== undefined && agent.parentID === null) {
+					updateAgent(sessionID, { parentID: info.parentID ?? null });
+				}
+			} catch {
+				// Title is cosmetic - ignore failures
+			}
+		}
+
+		function ensureAgent(
+			sessionID: string | undefined,
+			patch?: Partial<AgentState>,
+		): AgentState | undefined {
+			if (!sessionID) return undefined;
+			let agent = agents.get(sessionID);
+			if (!agent) {
+				const created = addAgent({ id: sessionID, message: "✨ created" });
+				if (created) {
+					broadcast();
+					void openViewer(agents.size - 1);
+					void hydrateTitle(sessionID);
+				}
+				agent = agents.get(sessionID);
+			}
+			if (agent && patch) updateAgent(sessionID, patch);
+			return agent;
+		}
+
+		// ── Cleanup ──────────────────────────────────────────────────────────────
+
+		return async function cleanup() {
+			await log("info", "Plugin unloading, shutting down...");
+
+			controller.abort();
+
+			if (broadcastTimeout) {
+				clearTimeout(broadcastTimeout);
+				broadcastTimeout = null;
+			}
+
+			if (syncWs) {
+				if (syncWs.readyState === WebSocket.OPEN) {
+					syncWs.close(1001, "Client shutting down");
+				}
+				syncWs = null;
+			}
+
+			const closeMsg = JSON.stringify({ type: "serverclosing", reason: "unload" });
+			for (const ws of clients) {
+				if (ws.readyState === WebSocket.OPEN) {
+					ws.send(closeMsg);
+					ws.close(1001, "Server shutting down");
+				}
+			}
+			clients.clear();
+
+			if (wss && isServerInstance) {
+				wss.stop(true);
+				wss = null;
+			}
+
+			if (heartbeatInterval) {
+				clearInterval(heartbeatInterval);
+				heartbeatInterval = null;
+			}
+			if (idleCleanupInterval) {
+				clearInterval(idleCleanupInterval);
+				idleCleanupInterval = null;
+			}
+
+			agents.clear();
+			agentFileActivity.clear();
+			await log("info", "Cleanup complete");
+		};
+	},
 };
